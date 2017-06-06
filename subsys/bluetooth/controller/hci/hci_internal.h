@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016 Nordic Semiconductor ASA
+ * Copyright (c) 2016-2017 Nordic Semiconductor ASA
  * Copyright (c) 2016 Vinayak Kariappa Chettimada
  *
  * SPDX-License-Identifier: Apache-2.0
@@ -12,10 +12,11 @@
 extern s32_t    hci_hbuf_total;
 extern u32_t    hci_hbuf_sent;
 extern u32_t    hci_hbuf_acked;
+#endif
+
 extern atomic_t hci_state_mask;
 
-#define HCI_STATE_BIT_RESET 0
-#endif
+#define HCI_STATE_BIT_RESET       0
 
 #define HCI_CLASS_EVT_REQUIRED    0
 #define HCI_CLASS_EVT_DISCARDABLE 1

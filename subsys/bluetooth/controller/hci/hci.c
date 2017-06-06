@@ -36,6 +36,9 @@
  */
 static u16_t _opcode;
 
+/* State mask for pending or ongoing operations */
+atomic_t hci_state_mask;
+
 #if CONFIG_BLUETOOTH_CONTROLLER_DUP_FILTER_LEN > 0
 /* Scan duplicate filter */
 struct dup {
@@ -51,7 +54,6 @@ static u32_t dup_curr;
 s32_t    hci_hbuf_total;
 u32_t    hci_hbuf_sent;
 u32_t    hci_hbuf_acked;
-atomic_t hci_state_mask;
 static struct k_poll_signal *hbuf_signal;
 #endif
 
