@@ -17,6 +17,9 @@ extern u32_t    hci_hbuf_acked;
 extern atomic_t hci_state_mask;
 
 #define HCI_STATE_BIT_RESET       0
+#define HCI_STATE_BIT_ADV         1
+#define HCI_STATE_BIT_SCAN        2
+#define HCI_STATE_BIT_CONN_PEND   3
 
 #define HCI_CLASS_EVT_REQUIRED    0
 #define HCI_CLASS_EVT_DISCARDABLE 1

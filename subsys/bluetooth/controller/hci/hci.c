@@ -629,6 +629,14 @@ static void le_set_adv_enable(struct net_buf *buf, struct net_buf **evt)
 
 	ccst = cmd_complete(evt, sizeof(*ccst));
 	ccst->status = (!status) ? 0x00 : BT_HCI_ERR_CMD_DISALLOWED;
+
+	if (!status) {
+		if (cmd->enable) {
+			atomic_set_bit(&hci_state_mask, HCI_STATE_BIT_ADV);
+		} else {
+			atomic_clear_bit(&hci_state_mask, HCI_STATE_BIT_ADV);
+		}
+	}
 }
 #endif /* CONFIG_BLUETOOTH_BROADCASTER */
 
@@ -669,6 +677,14 @@ static void le_set_scan_enable(struct net_buf *buf, struct net_buf **evt)
 
 	ccst = cmd_complete(evt, sizeof(*ccst));
 	ccst->status = (!status) ? 0x00 : BT_HCI_ERR_CMD_DISALLOWED;
+
+	if (!status) {
+		if (cmd->enable) {
+			atomic_set_bit(&hci_state_mask, HCI_STATE_BIT_ADV);
+		} else {
+			atomic_clear_bit(&hci_state_mask, HCI_STATE_BIT_ADV);
+		}
+	}
 }
 #endif /* CONFIG_BLUETOOTH_OBSERVER */
 
@@ -698,12 +714,18 @@ static void le_create_connection(struct net_buf *buf, struct net_buf **evt)
 				      conn_latency, supervision_timeout);
 
 	*evt = cmd_status((!status) ? 0x00 : BT_HCI_ERR_CMD_DISALLOWED);
+
+	if (!status) {
+		atomic_set_bit(&hci_state_mask, HCI_STATE_BIT_CONN_PEND);
+	}
 }
 
 static void le_create_conn_cancel(struct net_buf *buf, struct net_buf **evt)
 {
 	struct bt_hci_evt_cc_status *ccst;
 	u32_t status;
+
+	atomic_clear_bit(&hci_state_mask, HCI_STATE_BIT_CONN_PEND);
 
 	status = ll_connect_disable();
 
@@ -1387,6 +1409,8 @@ static void le_conn_complete(struct pdu_data *pdu_data, u16_t handle,
 {
 	struct bt_hci_evt_le_conn_complete *sep;
 	struct radio_le_conn_cmplt *radio_cc;
+
+	atomic_clear_bit(&hci_state_mask, HCI_STATE_BIT_CONN_PEND);
 
 	if (!(event_mask & BT_EVT_MASK_LE_META_EVENT) ||
 	    !(le_event_mask & BT_EVT_MASK_LE_CONN_COMPLETE)) {
