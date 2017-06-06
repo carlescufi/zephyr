@@ -949,7 +949,7 @@ struct bt_hci_cp_le_set_addr_res_enable {
 
 #define BT_HCI_OP_LE_SET_RPA_TIMEOUT            BT_OP(BT_OGF_LE, 0x002e)
 struct bt_hci_cp_le_set_rpa_timeout {
-	u8_t  rpa_timeout;
+	u16_t rpa_timeout;
 } __packed;
 
 #define BT_HCI_OP_LE_READ_MAX_DATA_LEN          BT_OP(BT_OGF_LE, 0x002f)

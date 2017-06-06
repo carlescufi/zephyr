@@ -14,12 +14,17 @@ extern u32_t    hci_hbuf_sent;
 extern u32_t    hci_hbuf_acked;
 #endif
 
+#if defined(CONFIG_BLUETOOTH_CONTROLLER_LE_PRIVACY)
+#define BT_ADDR_LE_EMPTY          0xff
+#endif
+
 extern atomic_t hci_state_mask;
 
 #define HCI_STATE_BIT_RESET       0
 #define HCI_STATE_BIT_ADV         1
 #define HCI_STATE_BIT_SCAN        2
 #define HCI_STATE_BIT_CONN_PEND   3
+#define HCI_STATE_BIT_AR          4
 
 #define HCI_CLASS_EVT_REQUIRED    0
 #define HCI_CLASS_EVT_DISCARDABLE 1
