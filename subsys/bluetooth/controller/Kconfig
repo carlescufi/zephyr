@@ -92,6 +92,7 @@ config BLUETOOTH_CONTROLLER_SUBVERSION_NUMBER
 	  Set the Subversion Number that will be used in VERSION_IND PDU.
 
 config BLUETOOTH_CONTROLLER_RX_PRIO_STACK_SIZE
+	prompt "RX Prio Stack Size"
 	int
 	default 448
 

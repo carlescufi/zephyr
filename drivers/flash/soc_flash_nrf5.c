@@ -229,6 +229,7 @@ static void time_slot_callback_work(u32_t ticks_at_expire, u32_t remainder,
 
 	op_desc = context;
 	if (op_desc->handler(op_desc->context) == FLASH_OP_DONE) {
+	//if (1) {
 		ll_timeslice_ticker_id_get(&instance_index, &ticker_id);
 
 		/* Stop the time slot ticker */
@@ -365,11 +366,18 @@ static int write_in_timeslice(off_t addr, const void *data, size_t len)
 
 #endif /* CONFIG_SOC_FLASH_NRF5_RADIO_SYNC */
 
+#define NOP_COUNT 0x8000
 static int erase_op(void *context)
 {
 	u32_t prev_nvmc_cfg = NRF_NVMC->CONFIG;
 	u32_t pg_size = NRF_FICR->CODEPAGESIZE;
 	struct erase_context *e_ctx = context;
+
+	for (int i = 0; i < NOP_COUNT; i++) {
+		__ASM volatile ("nop");
+	}
+
+	return FLASH_OP_DONE;
 
 #if defined(CONFIG_SOC_FLASH_NRF5_RADIO_SYNC)
 	u32_t ticks_begin = 0;
@@ -424,6 +432,11 @@ static int write_op(void *context)
 	u32_t addr_word;
 	u32_t tmp_word;
 	u32_t count;
+
+	for (int i = 0; i < NOP_COUNT; i++) {
+		__ASM volatile ("nop");
+	}
+	return FLASH_OP_DONE;
 
 #if defined(CONFIG_SOC_FLASH_NRF5_RADIO_SYNC)
 	u32_t ticks_begin = 0;

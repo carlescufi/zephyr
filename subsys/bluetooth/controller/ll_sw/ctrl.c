@@ -1023,6 +1023,8 @@ static inline u32_t isr_rx_scan(u8_t irkmatch_id, u8_t rssi_ready)
 {
 	struct pdu_adv *pdu_adv_rx;
 
+	LL_ASSERT(_radio.packet_rx_count == 5);
+	LL_ASSERT(_radio.packet_rx_last < _radio.packet_rx_count)
 	pdu_adv_rx = (struct pdu_adv *)
 		_radio.packet_rx[_radio.packet_rx_last]->pdu_data;
 
@@ -2564,6 +2566,9 @@ static inline void isr_rx_conn(u8_t crc_ok, u8_t trx_done,
 
 	/* Increment packet counter for this connection event */
 	_radio.packet_counter++;
+
+	LL_ASSERT(_radio.packet_rx_count == 5);
+	LL_ASSERT(_radio.packet_rx_last < _radio.packet_rx_count)
 
 	/* received data packet */
 	radio_pdu_node_rx = _radio.packet_rx[_radio.packet_rx_last];

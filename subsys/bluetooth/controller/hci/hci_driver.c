@@ -99,6 +99,7 @@ static void prio_recv_thread(void *p1, void *p2, void *p3)
 
 #if defined(CONFIG_INIT_STACKS)
 		if (k_uptime_get_32() - prio_ts > K_SECONDS(5)) {
+			k_call_stacks_analyze();
 			STACK_ANALYZE("prio recv thread stack",
 				      prio_recv_thread_stack);
 			prio_ts = k_uptime_get_32();
@@ -326,6 +327,7 @@ static void recv_thread(void *p1, void *p2, void *p3)
 
 #if defined(CONFIG_INIT_STACKS)
 		if (k_uptime_get_32() - rx_ts > K_SECONDS(5)) {
+			k_call_stacks_analyze();
 			STACK_ANALYZE("recv thread stack", recv_thread_stack);
 			rx_ts = k_uptime_get_32();
 		}
