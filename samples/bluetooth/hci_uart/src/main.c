@@ -11,6 +11,7 @@
 #include <string.h>
 
 #include <zephyr.h>
+#include <atomic.h>
 #include <arch/cpu.h>
 #include <misc/byteorder.h>
 #include <logging/sys_log.h>
@@ -240,17 +241,29 @@ static void tx_thread(void *p1, void *p2, void *p3)
 	}
 }
 
+#if defined(CONFIG_BLUETOOTH_CONTROLLER_ASSERT_HANDLER)
+static struct net_buf *h4_tx_buf;
+#endif
+
 static int h4_send(struct net_buf *buf)
 {
 	SYS_LOG_DBG("buf %p type %u len %u", buf, bt_buf_get_type(buf),
 		    buf->len);
 
+	int key;
+
 	switch (bt_buf_get_type(buf)) {
 	case BT_BUF_ACL_IN:
+		key = irq_lock();
 		uart_poll_out(hci_uart_dev, H4_ACL);
+		h4_tx_buf = buf;
+		irq_unlock(key);
 		break;
 	case BT_BUF_EVT:
+		key = irq_lock();
 		uart_poll_out(hci_uart_dev, H4_EVT);
+		h4_tx_buf = buf;
+		irq_unlock(key);
 		break;
 	default:
 		SYS_LOG_ERR("Unknown type %u", bt_buf_get_type(buf));
@@ -259,9 +272,12 @@ static int h4_send(struct net_buf *buf)
 	}
 
 	while (buf->len) {
+		key = irq_lock();
 		uart_poll_out(hci_uart_dev, net_buf_pull_u8(buf));
+		irq_unlock(key);
 	}
 
+	h4_tx_buf = NULL;
 	net_buf_unref(buf);
 
 	return 0;
@@ -277,6 +293,12 @@ void bt_controller_assert_handle(char *file, u32_t line)
 
 	uart_irq_rx_disable(hci_uart_dev);
 	uart_irq_tx_disable(hci_uart_dev);
+
+	if (h4_tx_buf) {
+		while (h4_tx_buf->len) {
+			uart_poll_out(hci_uart_dev, net_buf_pull_u8(h4_tx_buf));
+		}
+	}
 
 	if (file) {
 		while (file[len] != '\0') {
