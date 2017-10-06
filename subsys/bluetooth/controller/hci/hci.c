@@ -67,11 +67,15 @@ static u32_t conn_count;
 
 #define DEFAULT_EVENT_MASK           0x1fffffffffff
 #define DEFAULT_EVENT_MASK_PAGE_2    0x0
-#define DEFAULT_LE_EVENT_MASK 0x1f
+#define DEFAULT_LE_EVENT_MASK        0x1f
+#define DEFAULT_VS_EVENT_MASK        0x3
 
 static u64_t event_mask = DEFAULT_EVENT_MASK;
 static u64_t event_mask_page_2 = DEFAULT_EVENT_MASK_PAGE_2;
 static u64_t le_event_mask = DEFAULT_LE_EVENT_MASK;
+#if defined(CONFIG_BT_HCI_VS_EXT)
+static u64_t vs_event_mask = DEFAULT_VS_EVENT_MASK;
+#endif /* CONFIG_BT_HCI_VS_EXT */
 
 static void evt_create(struct net_buf *buf, u8_t evt, u8_t len)
 {
@@ -1671,11 +1675,11 @@ static void vs_read_supported_commands(struct net_buf *buf,
 	rp->status = 0x00;
 	memset(&rp->commands[0], 0, sizeof(rp->commands));
 
-	/* Set Version Information, Supported Commands, Supported Features. */
+	/* Read Version Information, Supported Commands, Supported Features. */
 	rp->commands[0] |= BIT(0) | BIT(1) | BIT(2);
 #if defined(CONFIG_BT_HCI_VS_EXT)
-	/* Write BD_ADDR, Read Build Info */
-	rp->commands[0] |= BIT(5) | BIT(7);
+	/* Set Event Mask, Write BD_ADDR, Read Build Info */
+	rp->commands[0] |= BIT(3) | BIT(5) | BIT(7);
 	/* Read Static Addresses, Read Key Hierarchy Roots */
 	rp->commands[1] |= BIT(0) | BIT(1);
 #endif /* CONFIG_BT_HCI_VS_EXT */
@@ -1693,6 +1697,17 @@ static void vs_read_supported_features(struct net_buf *buf,
 }
 
 #if defined(CONFIG_BT_HCI_VS_EXT)
+static void vs_set_event_mask(struct net_buf *buf, struct net_buf **evt)
+{
+	struct bt_hci_cp_vs_set_event_mask *cmd = (void *)buf->data;
+	struct bt_hci_evt_cc_status *ccst;
+
+	vs_event_mask = sys_get_le64(cmd->event_mask);
+
+	ccst = cmd_complete(evt, sizeof(*ccst));
+	ccst->status = 0x00;
+}
+
 static void vs_write_bd_addr(struct net_buf *buf, struct net_buf **evt)
 {
 	struct bt_hci_cp_vs_write_bd_addr *cmd = (void *)buf->data;
@@ -1832,12 +1847,16 @@ static int vendor_cmd_handle(u16_t ocf, struct net_buf *cmd,
 		break;
 
 #if defined(CONFIG_BT_HCI_VS_EXT)
-	case BT_OCF(BT_HCI_OP_VS_READ_BUILD_INFO):
-		vs_read_build_info(cmd, evt);
+	case BT_OCF(BT_HCI_OP_VS_SET_EVENT_MASK):
+		vs_set_event_mask(cmd, evt);
 		break;
 
 	case BT_OCF(BT_HCI_OP_VS_WRITE_BD_ADDR):
 		vs_write_bd_addr(cmd, evt);
+		break;
+
+	case BT_OCF(BT_HCI_OP_VS_READ_BUILD_INFO):
+		vs_read_build_info(cmd, evt);
 		break;
 
 	case BT_OCF(BT_HCI_OP_VS_READ_STATIC_ADDRS):
