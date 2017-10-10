@@ -31,6 +31,7 @@
 #include "bt.h"
 #include "gatt.h"
 #include "ll.h"
+#include "../../../subsys/bluetooth/host/hci_core.h"
 
 #define DEVICE_NAME		CONFIG_BT_DEVICE_NAME
 #define DEVICE_NAME_LEN		(sizeof(DEVICE_NAME) - 1)
@@ -575,6 +576,52 @@ static int cmd_init(int argc, char *argv[])
 	}
 
 	return 0;
+}
+
+static int cmd_hci(int argc, char *argv[])
+{
+	int cmd;
+
+	struct net_buf *buf = NULL;
+	struct net_buf *rsp = NULL;
+	struct bt_hci_cp_le_create_conn *cp;
+	int err = -1;
+
+	if (argc != 2) {
+		return -EINVAL;
+	}
+
+	cmd = strtoul(argv[1], NULL, 10);
+
+	switch(cmd) {
+	case 1:
+		buf = bt_hci_cmd_create(BT_HCI_OP_READ_LOCAL_FEATURES, sizeof(*cp));
+		if (!buf) {
+			return -ENOBUFS;
+		}
+
+		cp = net_buf_add(buf, sizeof(*cp));
+		memset(cp, 0, sizeof(*cp));
+
+		//cp-> = ;
+
+		err = bt_hci_cmd_send_sync(BT_HCI_OP_READ_LOCAL_FEATURES, buf, NULL);
+		break;
+	case 2:
+
+		err = bt_hci_cmd_send_sync(BT_HCI_OP_READ_LOCAL_FEATURES, NULL, &rsp);
+		break;
+
+	default:
+		err =  -EINVAL;
+		break;
+	}
+
+	if (rsp) {
+		net_buf_unref(rsp);
+	}
+
+	return err;
 }
 
 static void cmd_active_scan_on(int dups)
@@ -1968,6 +2015,8 @@ static int cmd_bredr_sdp_find_record(int argc, char *argv[])
 
 static const struct shell_cmd bt_commands[] = {
 	{ "init", cmd_init, HELP_ADDR_LE },
+	{ "hci", cmd_hci,
+	  "<value: cmd number>" },
 	{ "scan", cmd_scan,
 	  "<value: on, passive, off> <dup filter: dups, nodups>" },
 	{ "advertise", cmd_advertise,

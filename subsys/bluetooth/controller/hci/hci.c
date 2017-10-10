@@ -302,11 +302,14 @@ static void host_num_completed_packets(struct net_buf *buf,
 		ccst = cmd_complete(evt, sizeof(*ccst));
 		ccst->status = BT_HCI_ERR_CMD_DISALLOWED;
 		return;
-	} else if (!conn_count) {
+	}
+#if 1
+       	else if (!conn_count) {
 		ccst = cmd_complete(evt, sizeof(*ccst));
 		ccst->status = BT_HCI_ERR_INVALID_PARAM;
 		return;
 	}
+#endif
 
 	/* leave *evt == NULL so no event is generated */
 	for (i = 0; i < cmd->num_handles; i++) {

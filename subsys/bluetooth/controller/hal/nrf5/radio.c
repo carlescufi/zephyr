@@ -11,6 +11,8 @@
 #include "hal/ccm.h"
 #include "hal/radio.h"
 #include "ll_sw/pdu.h"
+#include "common/log.h"
+#include "hal/debug.h"
 
 #if defined(CONFIG_SOC_SERIES_NRF51X)
 #define RADIO_PDU_LEN_MAX (BIT(5) - 1)
@@ -1036,6 +1038,7 @@ void radio_ar_configure(u32_t nirk, void *irk)
 {
 	NRF_AAR->ENABLE = (AAR_ENABLE_ENABLE_Enabled << AAR_ENABLE_ENABLE_Pos) &
 			  AAR_ENABLE_ENABLE_Msk;
+	LL_ASSERT(nirk == 0 || nirk == 1);
 	NRF_AAR->NIRK = nirk;
 	NRF_AAR->IRKPTR = (u32_t)irk;
 	NRF_AAR->ADDRPTR = (u32_t)NRF_RADIO->PACKETPTR - 1;

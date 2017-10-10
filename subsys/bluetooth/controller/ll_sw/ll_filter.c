@@ -230,6 +230,7 @@ bt_addr_t *ctrl_lrpa_get(u8_t rl_idx)
 
 u8_t *ctrl_irks_get(u8_t *count)
 {
+	LL_ASSERT(peer_irk_count == 0 || peer_irk_count == 1);
 	*count = peer_irk_count;
 	return (u8_t *)peer_irks;
 }
@@ -255,6 +256,19 @@ u8_t ctrl_rl_irk_idx(u8_t irkmatch_id)
 {
 	u8_t i;
 
+	switch(irkmatch_id) {
+
+		case 0:
+			//LL_ASSERT(0);
+			break;
+		case 1:
+			LL_ASSERT(0);
+			break;
+
+		default:
+			LL_ASSERT(0);
+			break;
+	}
 	LL_ASSERT(irkmatch_id < peer_irk_count);
 	i = peer_irk_rl_ids[irkmatch_id];
 	LL_ASSERT(i < CONFIG_BT_CTLR_RL_SIZE);

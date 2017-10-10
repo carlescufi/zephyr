@@ -42,7 +42,7 @@
 #include "crypto.h"
 
 /* Peripheral timeout to initialize Connection Parameter Update procedure */
-#define CONN_UPDATE_TIMEOUT  K_SECONDS(5)
+#define CONN_UPDATE_TIMEOUT  K_SECONDS(60)
 #define RPA_TIMEOUT          K_SECONDS(CONFIG_BT_RPA_TIMEOUT)
 
 #define HCI_CMD_TIMEOUT      K_SECONDS(10)
@@ -721,6 +721,7 @@ static int hci_le_set_phy(struct bt_conn *conn)
 
 static void update_conn_param(struct bt_conn *conn)
 {
+	return;
 	/*
 	 * Core 4.2 Vol 3, Part C, 9.3.12.2
 	 * The Peripheral device should not perform a Connection Parameter
@@ -855,7 +856,7 @@ static void le_conn_complete(struct net_buf *buf)
 			goto done;
 		}
 	}
-
+#if 1
 	if (BT_FEAT_LE_PHY_2M(bt_dev.le.features)) {
 		err = hci_le_set_phy(conn);
 		if (!err) {
@@ -863,6 +864,7 @@ static void le_conn_complete(struct net_buf *buf)
 			goto done;
 		}
 	}
+#endif
 
 	if (BT_FEAT_LE_DLE(bt_dev.le.features)) {
 		err = hci_le_set_data_len(conn);
@@ -896,6 +898,7 @@ static void le_remote_feat_complete(struct net_buf *buf)
 		       sizeof(conn->le.features));
 	}
 
+#if 1
 	if (BT_FEAT_LE_PHY_2M(bt_dev.le.features) &&
 	    BT_FEAT_LE_PHY_2M(conn->le.features)) {
 		int err;
@@ -906,6 +909,7 @@ static void le_remote_feat_complete(struct net_buf *buf)
 			goto done;
 		}
 	}
+#endif
 
 	if (BT_FEAT_LE_DLE(bt_dev.le.features) &&
 	    BT_FEAT_LE_DLE(conn->le.features)) {
@@ -2301,6 +2305,7 @@ static void hci_encrypt_change(struct net_buf *buf)
 		 * are updated on HCI 'Link Key Notification Event'
 		 */
 		if (conn->encrypt) {
+			printk("updating smp keys\n");
 			bt_smp_update_keys(conn);
 		}
 		update_sec_level(conn);
@@ -2431,6 +2436,8 @@ static void le_ltk_request(struct net_buf *buf)
 	    evt->rand == 0 && evt->ediv == 0) {
 		struct bt_hci_cp_le_ltk_req_reply *cp;
 
+		printk("Found LTK P256\n");
+
 		buf = bt_hci_cmd_create(BT_HCI_OP_LE_LTK_REQ_REPLY,
 					sizeof(*cp));
 		if (!buf) {
@@ -2483,6 +2490,7 @@ static void le_ltk_request(struct net_buf *buf)
 	}
 #endif /* !CONFIG_BT_SMP_SC_ONLY */
 
+	printk("Not found LTK P256!\n");
 	buf = bt_hci_cmd_create(BT_HCI_OP_LE_LTK_REQ_NEG_REPLY, sizeof(*cp));
 	if (!buf) {
 		BT_ERR("Out of command buffers");
@@ -3737,12 +3745,16 @@ static int set_static_addr(void)
 #endif /* CONFIG_SOC_FAMILY_NRF5 */
 
 	BT_DBG("Generating new static random address");
-
+#if 1
+	const u8_t addr[6] = {0xc0,0x01,0x01,0x01,0x01,0xc0};
+	memcpy(&bt_dev.id_addr.a.val[0], addr, 6);
+	bt_dev.id_addr.type = BT_ADDR_LE_RANDOM;
+#else
 	err = bt_addr_le_create_static(&bt_dev.id_addr);
 	if (err) {
 		return err;
 	}
-
+#endif
 	if (bt_storage) {
 		ssize_t ret;
 
