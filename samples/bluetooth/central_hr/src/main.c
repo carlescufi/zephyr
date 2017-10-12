@@ -25,6 +25,65 @@ static struct bt_uuid_16 uuid = BT_UUID_INIT_16(0);
 static struct bt_gatt_discover_params discover_params;
 static struct bt_gatt_subscribe_params subscribe_params;
 
+void my_expiry_function(struct k_timer *timer_id);
+K_TIMER_DEFINE(my_timer, my_expiry_function, NULL);
+
+void my_expiry_function(struct k_timer *timer_id)
+{
+	printk("Timeout\n");
+	k_timer_stop(&my_timer);
+	//bt_conn_disconnect(default_conn, 0x10);
+}
+
+
+static u8_t discover_func(struct bt_conn *conn,
+			     const struct bt_gatt_attr *attr,
+			     struct bt_gatt_discover_params *params);
+
+static void exchange_func(struct bt_conn *conn, u8_t err,
+			  struct bt_gatt_exchange_params *params)
+{
+	printk("Exchange %s\n", err == 0 ? "successful" : "failed");
+	uuid.val = BT_UUID_HRS_VAL;
+		discover_params.uuid = &uuid.uuid;
+		discover_params.func = discover_func;
+		discover_params.start_handle = 0x0001;
+		discover_params.end_handle = 0xffff;
+		discover_params.type = BT_GATT_DISCOVER_PRIMARY;
+
+		err = bt_gatt_discover(default_conn, &discover_params);
+		if (err) {
+			printk("Discover failed(err %d)\n", err);
+			return;
+		}
+
+}
+
+static struct bt_gatt_exchange_params exchange_params;
+
+int cmd_gatt_exchange_mtu(void)
+{
+	int err;
+
+	if (!default_conn) {
+		printk("Not connected\n");
+		return 0;
+	}
+
+	exchange_params.func = exchange_func;
+
+	err = bt_gatt_exchange_mtu(default_conn, &exchange_params);
+	if (err) {
+		printk("Exchange failed (err %d)\n", err);
+	} else {
+		printk("Exchange pending\n");
+	}
+
+	return 0;
+}
+
+
+u8_t gatt_write_buf[128];
 static u8_t notify_func(struct bt_conn *conn,
 			   struct bt_gatt_subscribe_params *params,
 			   const void *data, u16_t length)
@@ -37,6 +96,8 @@ static u8_t notify_func(struct bt_conn *conn,
 
 	printk("[NOTIFICATION] data %p length %u\n", data, length);
 
+	bt_gatt_write_without_response(conn, 0x1234, gatt_write_buf, 60, 0);
+	//bt_conn_disconnect(conn, 0x10);
 	return BT_GATT_ITER_CONTINUE;
 }
 
@@ -88,6 +149,7 @@ static u8_t discover_func(struct bt_conn *conn,
 			printk("[SUBSCRIBED]\n");
 		}
 
+
 		return BT_GATT_ITER_STOP;
 	}
 
@@ -107,23 +169,14 @@ static void connected(struct bt_conn *conn, u8_t conn_err)
 	}
 
 	printk("Connected: %s\n", addr);
+	//k_timer_start(&my_timer, 2100, 2100);
 
 	if (conn == default_conn) {
-		uuid.val = BT_UUID_HRS_VAL;
-		discover_params.uuid = &uuid.uuid;
-		discover_params.func = discover_func;
-		discover_params.start_handle = 0x0001;
-		discover_params.end_handle = 0xffff;
-		discover_params.type = BT_GATT_DISCOVER_PRIMARY;
-
-		err = bt_gatt_discover(default_conn, &discover_params);
-		if (err) {
-			printk("Discover failed(err %d)\n", err);
-			return;
+		cmd_gatt_exchange_mtu();
 		}
-	}
 }
 
+#define BT_LE_CONN_PARAM_FAST BT_LE_CONN_PARAM(6, 6, 0, 10)
 static bool eir_found(u8_t type, const u8_t *data, u8_t data_len,
 		      void *user_data)
 {
@@ -156,7 +209,7 @@ static bool eir_found(u8_t type, const u8_t *data, u8_t data_len,
 			}
 
 			default_conn = bt_conn_create_le(addr,
-							 BT_LE_CONN_PARAM_DEFAULT);
+							 BT_LE_CONN_PARAM_FAST);
 			return false;
 		}
 	}
@@ -258,5 +311,7 @@ void main(void)
 		return;
 	}
 
+
 	printk("Scanning successfully started\n");
+
 }

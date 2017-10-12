@@ -38,6 +38,45 @@ static const struct bt_data sd[] = {
 	BT_DATA(BT_DATA_NAME_COMPLETE, DEVICE_NAME, DEVICE_NAME_LEN),
 };
 
+struct k_delayed_work disc_work;
+
+static void exchange_func(struct bt_conn *conn, u8_t err,
+			  struct bt_gatt_exchange_params *params)
+{
+	printk("Exchange %s\n", err == 0 ? "successful" : "failed");
+}
+
+static struct bt_gatt_exchange_params exchange_params;
+
+int cmd_gatt_exchange_mtu(void)
+{
+	int err;
+
+	if (!default_conn) {
+		printk("Not connected\n");
+		return 0;
+	}
+
+	exchange_params.func = exchange_func;
+
+	err = bt_gatt_exchange_mtu(default_conn, &exchange_params);
+	if (err) {
+		printk("Exchange failed (err %d)\n", err);
+	} else {
+		printk("Exchange pending\n");
+	}
+
+	return 0;
+}
+
+
+
+static void disc_timeout(struct k_work *work)
+{
+	printk("Timeout\n");
+	bt_conn_disconnect(default_conn, 0x10);
+}
+
 static void connected(struct bt_conn *conn, u8_t err)
 {
 	if (err) {
@@ -45,6 +84,11 @@ static void connected(struct bt_conn *conn, u8_t err)
 	} else {
 		default_conn = bt_conn_ref(conn);
 		printk("Connected\n");
+		//k_delayed_work_submit(&disc_work, 200);
+
+	if (conn == default_conn) {
+		cmd_gatt_exchange_mtu();
+		}
 	}
 }
 
@@ -99,6 +143,7 @@ static struct bt_conn_auth_cb auth_cb_display = {
 	.cancel = auth_cancel,
 };
 
+u8_t gatt_write_buf[128];
 void main(void)
 {
 	int err;
@@ -109,6 +154,7 @@ void main(void)
 		return;
 	}
 
+	k_delayed_work_init(&disc_work, disc_timeout);
 	bt_conn_cb_register(&conn_callbacks);
 	bt_conn_auth_cb_register(&auth_cb_display);
 
@@ -116,12 +162,25 @@ void main(void)
 	 * of starting delayed work so we do it here
 	 */
 	while (1) {
-		k_sleep(MSEC_PER_SEC);
+		//k_sleep(MSEC_PER_SEC);
 
 		/* Heartrate measurements simulation */
 		hrs_notify();
 
 		/* Battery level simulation */
 		bas_notify();
+
+		if (default_conn) {
+			//bt_conn_disconnect(default_conn, 0x10);
+			//default_conn = NULL;
+		}
+	//while (repeat--) {
+		//if (default_conn) {
+		//err = bt_gatt_write_without_response(default_conn, 0x1234,
+						     //gatt_write_buf, 60, 0);
+		//if (err) {
+		//	break;
+		//}
+		//}
 	}
 }

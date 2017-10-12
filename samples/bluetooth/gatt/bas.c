@@ -24,7 +24,7 @@
 
 static struct bt_gatt_ccc_cfg  blvl_ccc_cfg[BT_GATT_CCC_MAX] = {};
 static u8_t simulate_blvl;
-static u8_t battery = 100;
+static u8_t battery[60];
 
 static void blvl_ccc_cfg_changed(const struct bt_gatt_attr *attr,
 				 u16_t value)
@@ -64,11 +64,11 @@ void bas_notify(void)
 		return;
 	}
 
-	battery--;
-	if (!battery) {
+	//battery--;
+	//if (!battery) {
 		/* Software eco battery charger */
-		battery = 100;
-	}
+	//	battery = 100;
+	//}
 
 	bt_gatt_notify(NULL, &attrs[2], &battery, sizeof(battery));
 }

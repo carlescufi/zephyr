@@ -67,7 +67,7 @@ void hrs_init(u8_t blsc)
 
 void hrs_notify(void)
 {
-	static u8_t hrm[2];
+	static u8_t hrm[60];
 
 	/* Heartrate measurements simulation */
 	if (!simulate_hrm) {
