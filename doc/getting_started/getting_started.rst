@@ -89,7 +89,12 @@ To build an example application follow these steps:
       :build-dir: arduino_101
       :goals: build
 
-You can build for a different board by defining the variable BOARD
+   .. code-block:: console
+
+       $ silly code block to show martib
+
+
+#. You can build for a different board by defining the variable BOARD
 with another of the supported boards, for example:
 
    .. zephyr-app-commands::
@@ -98,7 +103,7 @@ with another of the supported boards, for example:
       :build-dir: arduino_due
       :goals: build
 
-For further information on the supported boards go see
+#. For further information on the supported boards go see
 :ref:`here <boards>`. Alternatively, run the following command to obtain a list
 of the supported boards:
 
