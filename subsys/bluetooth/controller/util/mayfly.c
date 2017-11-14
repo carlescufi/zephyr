@@ -10,15 +10,14 @@
 #include "mayfly.h"
 
 static struct {
-	void *head;
-	void *tail;
+	memq_t memq;
 	u8_t enable_req;
 	u8_t enable_ack;
 	u8_t disable_req;
 	u8_t disable_ack;
 } mft[MAYFLY_CALLEE_COUNT][MAYFLY_CALLER_COUNT];
 
-static void *mfl[MAYFLY_CALLEE_COUNT][MAYFLY_CALLER_COUNT][2];
+static memq_link_t mfl[MAYFLY_CALLEE_COUNT][MAYFLY_CALLER_COUNT];
 
 void mayfly_init(void)
 {
@@ -30,9 +29,8 @@ void mayfly_init(void)
 
 		caller_id = MAYFLY_CALLER_COUNT;
 		while (caller_id--) {
-			memq_init(mfl[callee_id][caller_id],
-				  &mft[callee_id][caller_id].head,
-				  &mft[callee_id][caller_id].tail);
+			memq_init(&mft[callee_id][caller_id].memq,
+				  &mfl[callee_id][caller_id]);
 		}
 	}
 }
@@ -102,7 +100,7 @@ u32_t mayfly_enqueue(u8_t caller_id, u8_t callee_id, u8_t chain,
 
 	/* new, add as ready in the queue */
 	m->_req = ack + 1;
-	memq_enqueue(m, m->_link, &mft[callee_id][caller_id].tail);
+	memq_enqueue(&mft[callee_id][caller_id].memq, m->_link, m);
 
 	/* pend the callee for execution */
 	mayfly_pend(caller_id, callee_id);
@@ -119,13 +117,12 @@ void mayfly_run(u8_t callee_id)
 	/* iterate through each caller queue to this callee_id */
 	caller_id = MAYFLY_CALLER_COUNT;
 	while (caller_id--) {
-		void *link;
+		memq_link_t *link;
 		struct mayfly *m = 0;
 
 		/* fetch mayfly in callee queue, if any */
-		link = memq_peek(mft[callee_id][caller_id].tail,
-				 mft[callee_id][caller_id].head,
-				 (void **)&m);
+		link = memq_peek(&mft[callee_id][caller_id].memq, (void **)&m);
+
 		while (link) {
 			u8_t state;
 			u8_t req;
@@ -144,8 +141,7 @@ void mayfly_run(u8_t callee_id)
 			/* dequeue if not re-pended */
 			req = m->_req;
 			if (((req - m->_ack) & 0x03) != 1) {
-				memq_dequeue(mft[callee_id][caller_id].tail,
-					     &mft[callee_id][caller_id].head,
+				memq_dequeue(&mft[callee_id][caller_id].memq,
 					     0);
 
 				/* release link into dequeued mayfly struct */
@@ -156,8 +152,7 @@ void mayfly_run(u8_t callee_id)
 			}
 
 			/* fetch next mayfly in callee queue, if any */
-			link = memq_peek(mft[callee_id][caller_id].tail,
-					 mft[callee_id][caller_id].head,
+			link = memq_peek(&mft[callee_id][caller_id].memq,
 					 (void **)&m);
 
 			/* yield out of mayfly_run if a mayfly function was
