@@ -8,66 +8,61 @@
 #include <zephyr/types.h>
 #include <stddef.h>
 
-inline void *memq_peek(void *tail, void *head, void **mem);
+#include "memq.h"
 
-void *memq_init(void *link, void **head, void **tail)
+inline memq_link_t *memq_peek(memq_t *memq, void **mem);
+
+memq_link_t *memq_init(memq_t *memq, memq_link_t *link)
 {
 	/* head and tail pointer to the initial link node */
-	*head = *tail = link;
+	memq->head = memq->tail = link;
 
 	return link;
 }
 
-void *memq_enqueue(void *mem, void *link, void **tail)
+memq_link_t *memq_enqueue(memq_t *memq, memq_link_t *link, void *mem)
 {
 	/* make the current tail link node point to new link node */
-	*((void **)*tail) = link;
-
-	/* assign mem to current tail link node */
-	*((void **)*tail + 1) = mem;
+	memq->tail->next = link;
+	/* make the current tail mem point to the newly enqueued mem */
+	memq->tail->mem = mem;
 
 	/* increment the tail! */
-	*tail = link;
+	memq->tail = link;
 
 	return link;
 }
 
-void *memq_peek(void *tail, void *head, void **mem)
+memq_link_t *memq_peek(memq_t *memq, void **mem)
 {
-	void *link;
-
 	/* if head and tail are equal, then queue empty */
-	if (head == tail) {
+	if (memq->head == memq->tail) {
 		return 0;
 	}
 
-	/* pick the head link node */
-	link = head;
-
-	/* extract the element node */
 	if (mem) {
-		*mem = *((void **)link + 1);
+		*mem = memq->head->mem;
 	}
 
-	return link;
+	return memq->head;
 }
 
-void *memq_dequeue(void *tail, void **head, void **mem)
+memq_link_t *memq_dequeue(memq_t *memq, void **mem)
 {
-	void *link;
+	memq_link_t *link;
 
 	/* use memq peek to get the link and mem */
-	link = memq_peek(tail, *head, mem);
-	if (!link) {
-		return 0;
-	}
+	link = memq_peek(memq, mem);
 
-	/* increment the head to next link node */
-	*head = *((void **)link);
+	if (link) {
+		/* increment the head to next link node */
+		memq->head = link->next;
+	}
 
 	return link;
 }
 
+#if 0
 u32_t memq_ut(void)
 {
 	void *head;
@@ -100,3 +95,4 @@ u32_t memq_ut(void)
 
 	return 0;
 }
+#endif
