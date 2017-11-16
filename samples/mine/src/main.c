@@ -17,10 +17,9 @@
 
 #define LINK_COUNT (BUF_COUNT + 1)
 #define LINK_SIZE 8
-u8_t MALIGN(4) pool_link[LINK_COUNT][LINK_SIZE];
+memq_link_t MALIGN(4) pool_link[LINK_COUNT];
 void *pool_link_free = NULL;
-void *q_head = NULL;
-void *q_tail = NULL;
+memq_t q;
 #else
 
 K_FIFO_DEFINE(my_fifo);
@@ -40,7 +39,7 @@ void tid0_entry(int unused0, int unused1, int unused2)
 
 #if defined(MEMQ)
 	while (1) {
-		void *link, *link_ret;
+		memq_link_t *link, *link_ret;
 
 		k_yield();
 
@@ -51,16 +50,16 @@ void tid0_entry(int unused0, int unused1, int unused2)
 			continue;
 		}
 
-		link_ret = memq_enqueue(NULL, link, &q_tail);
+		link_ret = memq_enqueue(&q, link, NULL);
 		NRF_GPIO->OUTCLR = BIT(12);
 		k_yield();
 
-		if ((link_ret != link) || (q_tail != link)) {
+		if ((link_ret != link) || (q.tail != link)) {
 			printk("memq_enqueue failed.\n");
 			return;
 		}
 		printk("memq_enqueue success. (h: %p, t:%p)\n",
-		       q_head, q_tail);
+		       q.head, q.tail);
 	}
 #else
 	while (1) {
@@ -91,16 +90,16 @@ void tid1_entry(int unused0, int unused1, int unused2)
 
 #if defined(MEMQ)
 	while (1) {
-		void *link;
+		memq_link_t *link;
 
 		k_yield();
 
-		link = memq_dequeue(q_tail, &q_head, NULL);
+		link = memq_dequeue(&q, NULL);
 		if (!link) {
 			continue;
 		}
 		printk("memq_dequeue success. (h: %p, t: %p)\n",
-		       q_head, q_tail);
+		       q.head, q.tail);
 	}
 #else
 	while (1) {
@@ -117,7 +116,7 @@ void tid1_entry(int unused0, int unused1, int unused2)
 void main(void)
 {
 #if defined(MEMQ)
-	void *link, *link_ret;
+	memq_link_t *link, *link_ret;
 #endif
 
 	printk("main\n");
@@ -125,7 +124,7 @@ void main(void)
 	NRF_GPIO->DIRSET = BIT(12);
 	NRF_GPIO->OUTCLR = BIT(12);
 #if defined(MEMQ)
-	mem_init(pool_link, LINK_SIZE, LINK_COUNT, &pool_link_free);
+	mem_init(pool_link, sizeof(memq_link_t), LINK_COUNT, &pool_link_free);
 	
 	link = mem_acquire(&pool_link_free);
 	if (!link) {
@@ -133,8 +132,8 @@ void main(void)
 		return;
 	}
 
-	link_ret = memq_init(link, &q_head, &q_tail);
-	if ((link_ret != link) || (q_head != link)) {
+	link_ret = memq_init(&q, link);
+	if ((link_ret != link) || (q.head != link)) {
 		printk("memq_init failed.\n");
 	}
 #endif
