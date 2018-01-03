@@ -112,25 +112,15 @@ endif()
 if(CREATE_NEW_DOTCONFIG)
   execute_process(
     COMMAND
-    ${PROJECT_SOURCE_DIR}/scripts/kconfig/merge_config.sh
-    -m
-    -q
-    -O ${PROJECT_BINARY_DIR}
+    ${PYTHON_EXECUTABLE}
+    ${PROJECT_SOURCE_DIR}/scripts/kconfig/kconfig.py
+    ${KCONFIG_ROOT}
+    ${PROJECT_BINARY_DIR}/.config
+    ${PROJECT_BINARY_DIR}/include/generated/autoconf.h
     ${merge_config_files}
     WORKING_DIRECTORY ${APPLICATION_SOURCE_DIR}
     # The working directory is set to the app dir such that the user
     # can use relative paths in CONF_FILE, e.g. CONF_FILE=nrf5.conf
-    RESULT_VARIABLE ret
-  )
-  if(NOT "${ret}" STREQUAL "0")
-    message(FATAL_ERROR "command failed with return code: ${ret}")
-  endif()
-
-  execute_process(
-	  COMMAND ${KCONFIG_CONF}
-      --olddefconfig
-      ${KCONFIG_ROOT}
-    WORKING_DIRECTORY ${PROJECT_BINARY_DIR}/kconfig
     RESULT_VARIABLE ret
   )
   if(NOT "${ret}" STREQUAL "0")
@@ -147,14 +137,6 @@ endif()
 foreach(merge_config_input ${merge_config_files} ${DOTCONFIG})
   set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${merge_config_input})
 endforeach()
-
-message(STATUS "Generating zephyr/include/generated/autoconf.h")
-execute_process(
-	COMMAND ${KCONFIG_CONF}
-    --silentoldconfig
-    ${KCONFIG_ROOT}
-  WORKING_DIRECTORY ${PROJECT_BINARY_DIR}/kconfig
-)
 
 add_custom_target(config-sanitycheck DEPENDS ${DOTCONFIG})
 
