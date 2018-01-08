@@ -127,6 +127,13 @@ if(CREATE_NEW_DOTCONFIG)
     message(FATAL_ERROR "command failed with return code: ${ret}")
   endif()
 
+  if(WIN32)
+	  message(INFO " Windows build")
+  else()
+	  message(INFO " Non-Windows build : UNIX: ${UNIX} MINGW: ${MINGW} MSYS: ${MSYS} CYGWIN: ${CYGWIN}")
+  endif()
+  ASSERT(0 "")
+
   file(WRITE
     ${merge_config_files_checksum_file}
     ${merge_config_files_checksum}
