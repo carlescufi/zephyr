@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014 Wind River Systems, Inc.
+ * Copyright (c) 2017 Intel Corporation
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -39,7 +39,7 @@ volatile long long_one = 1L;
  *
  */
 
-void limits_test(void)
+void test_limits(void)
 {
 
 	zassert_true((long_max + long_one == LONG_MIN), NULL);
@@ -51,7 +51,7 @@ void limits_test(void)
  *
  */
 
-void stdbool_test(void)
+void test_stdbool(void)
 {
 
 	zassert_true((true == 1), "true value");
@@ -72,7 +72,7 @@ volatile size_t size_of_long_variable = sizeof(long_variable);
  *
  */
 
-void stddef_test(void)
+void test_stddef(void)
 {
 
 	zassert_true((size_of_long_variable == 4), "sizeof");
@@ -92,7 +92,7 @@ volatile u32_t unsigned_int = 0xffffff00;
  *
  */
 
-void stdint_test(void)
+void test_stdint(void)
 {
 	zassert_true((unsigned_int + unsigned_byte + 1u == 0), NULL);
 
@@ -112,7 +112,7 @@ char buffer[BUFSIZE];
  *
  */
 
-void memset_test(void)
+void test_memset(void)
 {
 	memset(buffer, 'a', BUFSIZE);
 	zassert_true((buffer[0] == 'a'), "memset");
@@ -125,7 +125,7 @@ void memset_test(void)
  *
  */
 
-void strlen_test(void)
+void test_strlen(void)
 {
 	memset(buffer, '\0', BUFSIZE);
 	memset(buffer, 'b', 5); /* 5 is BUFSIZE / 2 */
@@ -138,7 +138,7 @@ void strlen_test(void)
  *
  */
 
-void strcmp_test(void)
+void test_strcmp(void)
 {
 	strcpy(buffer, "eeeee");
 
@@ -153,7 +153,7 @@ void strcmp_test(void)
  *
  */
 
-void strncmp_test(void)
+void test_strncmp(void)
 {
 	const char pattern[] = "eeeeeeeeeeee";
 
@@ -164,7 +164,7 @@ void strncmp_test(void)
 	zassert_true((strncmp(buffer, "fffff", 0) == 0), "strncmp 0");
 	zassert_true((strncmp(buffer, "eeeff", 3) == 0), "strncmp 3");
 	zassert_true((strncmp(buffer, "eeeeeeeeeeeff", BUFSIZE) == 0),
-		    "strncmp 10");
+		     "strncmp 10");
 }
 
 
@@ -174,7 +174,7 @@ void strncmp_test(void)
  *
  */
 
-void strcpy_test(void)
+void test_strcpy(void)
 {
 	memset(buffer, '\0', BUFSIZE);
 	strcpy(buffer, "10 chars!\0");
@@ -188,7 +188,7 @@ void strcpy_test(void)
  *
  */
 
-void strncpy_test(void)
+void test_strncpy(void)
 {
 	int ret;
 
@@ -207,7 +207,7 @@ void strncpy_test(void)
  *
  */
 
-void strchr_test(void)
+void test_strchr(void)
 {
 	char *rs = NULL;
 	int ret;
@@ -231,7 +231,7 @@ void strchr_test(void)
  *
  */
 
-void memcmp_test(void)
+void test_memcmp(void)
 {
 	int ret;
 	unsigned char m1[5] = { 1, 2, 3, 4, 5 };
@@ -245,20 +245,20 @@ void memcmp_test(void)
 	zassert_true((ret != 0), "memcmp 5");
 }
 
-/**
- *
- * @brief Test string operations library
- */
-
-void string_test(void)
+void test_main(void)
 {
-
-	memset_test();
-	strlen_test();
-	strcmp_test();
-	strcpy_test();
-	strncpy_test();
-	strncmp_test();
-	strchr_test();
-	memcmp_test();
+	ztest_test_suite(test_c_lib,
+			 ztest_unit_test(test_limits),
+			 ztest_unit_test(test_stdbool),
+			 ztest_unit_test(test_stddef),
+			 ztest_unit_test(test_stdint),
+			 ztest_unit_test(test_memcmp),
+			 ztest_unit_test(test_strchr),
+			 ztest_unit_test(test_strcpy),
+			 ztest_unit_test(test_strncpy),
+			 ztest_unit_test(test_memset),
+			 ztest_unit_test(test_strlen),
+			 ztest_unit_test(test_strcmp)
+			 );
+	ztest_run_test_suite(test_c_lib);
 }
