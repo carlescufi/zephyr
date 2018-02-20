@@ -17,10 +17,12 @@ if LooseVersion(elftools.__version__) < LooseVersion('0.24'):
     sys.stderr.write("pyelftools is out of date, need version 0.24 or later\n")
     sys.exit(1)
 
+
 def debug(text):
     if not args.verbose:
         return
     sys.stdout.write(os.path.basename(sys.argv[0]) + ": " + text + "\n")
+
 
 def error(text):
     sys.stderr.write(os.path.basename(sys.argv[0]) + ": " + text + "\n")
@@ -29,14 +31,17 @@ def error(text):
 
 gdt_pd_fmt = "<HIH"
 
-FLAGS_GRAN = 1 << 7 # page granularity
+FLAGS_GRAN = 1 << 7  # page granularity
 ACCESS_EX = 1 << 3  # executable
 ACCESS_DC = 1 << 2  # direction/conforming
 ACCESS_RW = 1 << 1  # read or write permission
 
 # 6 byte pseudo descriptor, but we're going to actually use this as the
 # zero descriptor and return 8 bytes
+
+
 def create_gdt_pseudo_desc(addr, size):
+    debug("create pseudo decriptor: %x %x" % (addr, size))
     # ...and take back one byte for the Intel god whose Ark this is...
     size = size - 1
     return struct.pack(gdt_pd_fmt, size, addr, 0)
@@ -56,9 +61,13 @@ def chop_base_limit(base, limit):
 
 gdt_ent_fmt = "<HHBBBB"
 
+
 def create_code_data_entry(base, limit, dpl, flags, access):
+    debug("create code or data entry: %x %x %x %x %x" %
+          (base, limit, dpl, flags, access))
+
     base_lo, base_mid, base_hi, limit_lo, limit_hi = chop_base_limit(base,
-            limit)
+                                                                     limit)
 
     # This is a valid descriptor
     present = 1
@@ -82,17 +91,17 @@ def create_code_data_entry(base, limit, dpl, flags, access):
 
 
 def create_tss_entry(base, limit, dpl):
+    debug("create TSS entry: %x %x %x" % (base, limit, dpl))
     present = 1
 
     base_lo, base_mid, base_hi, limit_lo, limit_hi, = chop_base_limit(base,
-            limit)
+                                                                      limit)
 
-    type_code = 0x9 # non-busy 32-bit TSS descriptor
+    type_code = 0x9  # non-busy 32-bit TSS descriptor
     gran = 0
 
     flags = (gran << 7) | limit_hi
     type_byte = ((present << 7) | (dpl << 5) | type_code)
-
 
     return struct.pack(gdt_ent_fmt, limit_lo, base_lo, base_mid,
                        type_byte, flags, base_hi)
@@ -109,16 +118,19 @@ def get_symbols(obj):
 
 def parse_args():
     global args
-    parser = argparse.ArgumentParser(description = __doc__,
-            formatter_class = argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter)
 
     parser.add_argument("-k", "--kernel", required=True,
-            help="Zephyr kernel image")
+                        help="Zephyr kernel image")
     parser.add_argument("-v", "--verbose", action="store_true",
-            help="Print extra debugging information")
+                        help="Print extra debugging information")
     parser.add_argument("-o", "--output-gdt", required=True,
-            help="output GDT binary")
+                        help="output GDT binary")
     args = parser.parse_args()
+    if "VERBOSE" in os.environ:
+        args.verbose = 1
 
 
 def main():
@@ -132,17 +144,11 @@ def main():
     # code/data segments. If we are doing stack protection, we are going to
     # have two TSS to manage the main task and the special task for double
     # fault exception handling
-
-    if "CONFIG_X86_STACK_PROTECTION" in syms:
-        stackprot = True
-        if "CONFIG_X86_USERSPACE" in syms:
-            userspace = True
-            num_entries = 7
-        else:
-            userspace = False
-            num_entries = 5
+    if "CONFIG_USERSPACE" in syms:
+        num_entries = 7
+    elif "CONFIG_HW_STACK_PROTECTION" in syms:
+        num_entries = 5
     else:
-        stackprot = False
         num_entries = 3
 
     gdt_base = syms["_gdt"]
@@ -154,13 +160,13 @@ def main():
 
         # Selector 0x08: code descriptor
         fp.write(create_code_data_entry(0, 0xFFFFF, 0,
-                 FLAGS_GRAN, ACCESS_EX | ACCESS_RW))
+                                        FLAGS_GRAN, ACCESS_EX | ACCESS_RW))
 
         # Selector 0x10: data descriptor
         fp.write(create_code_data_entry(0, 0xFFFFF, 0,
-                 FLAGS_GRAN, ACCESS_RW))
+                                        FLAGS_GRAN, ACCESS_RW))
 
-        if stackprot:
+        if num_entries >= 5:
             main_tss = syms["_main_tss"]
             df_tss = syms["_df_tss"]
 
@@ -170,16 +176,15 @@ def main():
             # Selector 0x20: double-fault TSS
             fp.write(create_tss_entry(df_tss, 0x67, 0))
 
-            if userspace:
-                # Selector 0x28: code descriptor, dpl = 3
-                fp.write(create_code_data_entry(0, 0xFFFFF, 3,
-                         FLAGS_GRAN, ACCESS_EX | ACCESS_RW))
+        if num_entries == 7:
+            # Selector 0x28: code descriptor, dpl = 3
+            fp.write(create_code_data_entry(0, 0xFFFFF, 3,
+                                            FLAGS_GRAN, ACCESS_EX | ACCESS_RW))
 
-                # Selector 0x30: data descriptor, dpl = 3
-                fp.write(create_code_data_entry(0, 0xFFFFF, 3,
-                         FLAGS_GRAN, ACCESS_RW))
+            # Selector 0x30: data descriptor, dpl = 3
+            fp.write(create_code_data_entry(0, 0xFFFFF, 3,
+                                            FLAGS_GRAN, ACCESS_RW))
 
 
 if __name__ == "__main__":
     main()
-

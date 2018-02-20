@@ -7,7 +7,7 @@
 menuconfig LWM2M
 	bool "OMA LWM2M protocol stack"
 	default n
-	select ZOAP
+	select COAP
 	select NET_APP_CLIENT
 	select HTTP_PARSER_URL
 	help
@@ -26,6 +26,7 @@ config SYS_LOG_LWM2M_LEVEL
 config LWM2M_ENGINE_STACK_SIZE
 	int "LWM2M engine stack size"
 	default 1024
+	default 1536 if NET_LOG_GLOBAL
 	help
 	 Set the stack size for the LWM2M library engine (used for handling
 	 OBSERVE and NOTIFY events)
@@ -50,8 +51,8 @@ config LWM2M_ENGINE_MAX_REPLIES
 
 config LWM2M_ENGINE_MAX_OBSERVER
 	int "Maximum # of observable LWM2M resources"
-	default 50
-	range 10 200
+	default 20
+	range 5 200
 	help
 	  This value sets the maximum number of resources which can be
 	  added to the observe notification list.
@@ -72,7 +73,7 @@ config LWM2M_LOCAL_PORT
 
 config LWM2M_SECURITY_INSTANCE_COUNT
 	int "Maximum # of LWM2M Security object instances"
-	default 3
+	default 1
 	range 1 10
 	help
 	  This setting establishes the total count of LWM2M Security instances
@@ -80,7 +81,7 @@ config LWM2M_SECURITY_INSTANCE_COUNT
 
 config LWM2M_SERVER_INSTANCE_COUNT
 	int "Maximum # of LWM2M Server object instances"
-	default 3
+	default 1
 	range 1 10
 	help
 	  This setting establishes the total count of LWM2M Server instances
@@ -93,15 +94,9 @@ config LWM2M_RD_CLIENT_SUPPORT
 	  Client will use registration state machine to locate and connect to
 	  LWM2M servers (including bootstrap server support)
 
-config LWM2M_RD_CLIENT_STACK_SIZE
-	int "LWM2M RD client stack size"
-	default 1024
-	help
-	  Set the stack size for the LWM2M RD client
-
 config LWM2M_RD_CLIENT_INSTANCE_COUNT
 	int "Maximum # of LWM2M RD client instances"
-	default 2
+	default 1
 	help
 	  This setting establishes the total count of LWM2M RD client instances
 	  available.
@@ -168,14 +163,6 @@ config LWM2M_FIRMWARE_UPDATE_PULL_COAP_PROXY_ADDR
 	help
 	  Network address of the CoAP proxy server.
 
-config LWM2M_FIRMWARE_UPDATE_PULL_COAP_PROXY_URI_PATH
-	string "CoAP URI path element used by the proxy"
-	default "coap2http"
-	help
-	  CoAP URI path element exported by the CoAP proxy server.
-	  Defaults to coap2http, which is the URI path used by the
-	  Californium CoAP-HTTP proxy.
-
 endif # LWM2M_FIRMWARE_UPDATE_PULL_COAP_PROXY_SUPPORT
 
 config LWM2M_RW_JSON_SUPPORT
@@ -184,6 +171,15 @@ config LWM2M_RW_JSON_SUPPORT
 	help
 	  Include support for writing JSON data
 
+config LWM2M_DEVICE_PWRSRC_MAX
+	int "Maximum # of device power source records"
+	default 5
+	range 1 20
+	help
+	  This value sets the maximum number of power source data that a device
+	  can store.  These are displayed via the "Device" object /3/0/6,
+	  /3/0/7 and /3/0/8 resources.
+
 config LWM2M_DEVICE_ERROR_CODE_MAX
 	int "Maximum # of device obj error codes to store"
 	default 10
@@ -191,6 +187,13 @@ config LWM2M_DEVICE_ERROR_CODE_MAX
 	help
 	  This value sets the maximum number of error codes that the device
 	  object will store before ignoring new values.
+
+config LWM2M_NUM_ATTR
+	int "Maximum # of LWM2M attributes"
+	default 20
+	help
+	  This value sets up the maximum number of LwM2M attributes that
+	  we can handle at the same time.
 
 menu "IPSO Alliance Smart Object Support"
 

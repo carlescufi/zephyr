@@ -10,7 +10,6 @@ This document explains how to participate in project conversations, log bugs
 and enhancement requests, and submit patches to the project so your patch will
 be accepted quickly in the codebase.
 
-
 Licensing
 *********
 
@@ -32,7 +31,7 @@ this, check out articles such as `Why choose Apache 2.0 licensing`_ and
 `Top 10 Apache License Questions Answered`_).
 
 .. _Why choose Apache 2.0 licensing:
-   https://www.zephyrproject.org/about/faq/what-rationale-choosing-apache-20-license
+   https://www.zephyrproject.org/about/#faq
 
 .. _Top 10 Apache License Questions Answered:
    https://www.whitesourcesoftware.com/whitesource-blog/top-10-apache-license-questions-answered/
@@ -56,8 +55,8 @@ Importing code into the Zephyr OS from other projects that use a license
 other than the Apache 2.0 license needs to be fully understood in
 context and approved by the Zephyr governing board.
 
-By carefully reviewing potential contributions and also enforcing
-`developer attestations <DCO>`_ for contributed code, we can ensure that
+By carefully reviewing potential contributions and also enforcing a
+:ref:`DCO` for contributed code, we can ensure that
 the Zephyr community can develop products with the Zephyr Project
 without concerns over patent or copyright issues.
 
@@ -84,7 +83,6 @@ statement and thereby agrees to the DCO.
 When a developer submits a patch, it is a commitment that the contributor has
 the right to submit the patch per the license.  The DCO agreement is shown
 below and at http://developercertificate.org/.
-
 
 .. code-block:: none
 
@@ -129,7 +127,6 @@ to add the sign-off you can also amend a previous commit with the sign-off by
 running ``git commit --amend -s``. If you've pushed your changes to GitHub
 already you'll need to force push your branch after this with ``git push -f``.
 
-
 Prerequisites
 *************
 
@@ -143,19 +140,28 @@ and how to set up your development environment as introduced in the Zephyr
 .. _Getting Started Guide:
    https://www.zephyrproject.org/doc/getting_started/getting_started.html
 
-The examples below use a Linux host environment for Zephyr development.
-You should be familiar with common developer tools such as Git and Make, and
+You should be familiar with common developer tools such as Git and CMake, and
 platforms such as GitHub.
 
 If you haven't already done so, you'll need to create a (free) GitHub account
 on http://github.com and have Git tools available on your development system.
+
+.. note::
+   The Zephyr development workflow supports all 3 major operating systems
+   (Linux, macOS, and Windows) but some of the tools used in the sections below
+   are only available on Linux and macOS. On Windows, instead of running these
+   tools yourself, you will need to rely on the Continuous Integration (CI)
+   service ``shippable``, which runs automatically on GitHub when you submit
+   your Pull Request (PR).  You can see any failure results in the Shippable
+   details link near the end of the PR conversation list. See
+   `Continuous Integration`_ for more information
 
 Repository layout
 *****************
 
 To clone the main Zephyr Project repository use::
 
-    $ git clone https://github.com/zephyrproject-rtos/zephyr
+    git clone https://github.com/zephyrproject-rtos/zephyr
 
 The Zephyr project directory structure is described in `Source Tree Structure`_
 documentation. In addition to the Zephyr kernel itself, you'll also find the
@@ -185,6 +191,14 @@ finding, or that have similar ideas for changes or additions.  Send a message
 to the `Zephyr-devel mailing list`_ to introduce and discuss your idea with
 the development community.
 
+Please note that it's common practice on IRC to be away from the
+channel, but still have a client logged in to receive traffic. If you
+ask a question to a particular person and they don't answer, **try
+to stay signed in to the channel** if you can, so they have time to
+respond to you. This is especially important given the many different
+timezones Zephyr developers live in. If you don't get a timely
+response on IRC, try sending a message to the mailing list instead.
+
 It's always a good practice to search for existing or related issues before
 submitting your own. When you submit an issue (bug or feature request), the
 triage team will review and comment on the submission, typically within a few
@@ -193,32 +207,73 @@ business days.
 You can find all `open pull requests`_ on GitHub and open `Zephyr Project
 Issues`_ in Github issues.
 
-Development Tools and Git Setup
-*******************************
+ .. _Continuous Integration:
+
+Continuous Integration (CI)
+***************************
+
+The Zephyr Project operates a Continuous Integration (CI) system that runs on
+every Pull Request (PR) in order to verify several aspects of the PR:
+
+* Git commit formatting
+* Coding Style
+* Sanity Check builds for multiple architectures and boards
+* Documentation build to verify any doc changes
+
+CI is run on the ``shippable`` cloud service and it uses the same tools
+described in the `Contribution Tools`_ section.
+The CI results must be green indicating "All checks have passed" before
+the Pull Request can be merged.  CI is run when the PR is created, and
+again every time the PR is modified with a commit.  You can also force
+the CI system to recheck a PR by adding a comment to the PR saying
+simply ``retest`` in the message (helpful if the CI system fails unexpectedly).
+
+The current status of the CI run can always be found at the bottom of the
+GitHub PR page, below the review status. Depending on the success or failure
+of the run you will see:
+
+* "All checks have passed"
+* "All checks have failed"
+
+In case of failure you can click on the "Details" link presented below the
+failure message in order to navigate to ``shippable`` and inspect the results.
+Once you click on the link you will be taken to the ``shippable`` summary
+results page where a table with all the different builds will be shown. To see
+what build or test failed click on the row that contains the failed (i.e.
+non-green) build and then click on the "Tests" tab to see the console output
+messages indicating the failure.
+
+ .. _Contribution Tools:
+
+Contribution Tools and Git Setup
+********************************
 
 Signed-off-by
 =============
 
 The name in the commit message ``Signed-off-by:`` line and your email must
-match the change authorship information. Make sure your *.git/config* is set
-up correctly::
+match the change authorship information. Make sure your :file:`.gitconfig`
+is set up correctly:
 
-   $ git config --global user.name "David Developer"
-   $ git config --global user.email "david.developer@company.com"
+.. code-block:: console
+
+   git config --global user.name "David Developer"
+   git config --global user.email "david.developer@company.com"
 
 gitlint
-=========
+=======
 
 When you submit a pull request to the project, a series of checks are
 performed to verify your commit messages meet the requirements. The same step
-done during the CI process can be performed locally using the the *gitlint*
+done during the CI process can be performed locally using the the `gitlint`
 command.
 
-Install gitlint and run it locally in your tree and branch where your patches
-have been committed::
+Run `gitlint` locally in your tree and branch where your patches have been
+committed:
 
-     $ sudo pip3 install gitlint
-     $ gitlint
+.. code-block:: console
+
+     gitlint
 
 Note, gitlint only checks HEAD (the most recent commit), so you should run it
 after each commit, or use the ``--commits`` option to specify a commit range
@@ -227,25 +282,48 @@ covering all the development patches to be submitted.
 sanitycheck
 ===========
 
+.. note::
+   sanitycheck does not currently run on Windows.
+
 To verify that your changes did not break any tests or samples, please run the
 ``sanitycheck`` script locally before submitting your pull request to GitHub. To
 run the same tests the CI system runs, follow these steps from within your
-local Zephyr source working directory::
+local Zephyr source working directory:
 
-    $ source zephyr-env.sh
-    $ make host-tools
-    $ export PREBUILT_HOST_TOOLS=${ZEPHYR_BASE}/bin
-    $ export USE_CCACHE=1
-    $ ./scripts/sanitycheck
+.. code-block:: console
+
+    source zephyr-env.sh
+    ./scripts/sanitycheck
 
 The above will execute the basic sanitycheck script, which will run various
 kernel tests using the QEMU emulator.  It will also do some build tests on
 various samples with advanced features that can't run in QEMU.
 
-We highly recommend you run these tests locally to avoid any CI failures.
-Using CCACHE and pre-built host tools is optional, however it speeds up the
-execution time considerably.
+We highly recommend you run these tests locally to avoid any CI
+failures.
 
+uncrustify
+==========
+
+The `uncrustify tool <https://sourceforge.net/projects/uncrustify>`_ can
+be helpful to quickly reformat your source code to our `project coding
+standards <Coding Style>`_ together with a configuration file we've provided:
+
+.. code-block:: bash
+
+   # On Linux/macOS
+   uncrustify --replace --no-backup -l C -c $ZEPHYR_BASE/scripts/uncrustify.cfg my_source_file.c
+   # On Windows
+   uncrustify --replace --no-backup -l C -c %ZEPHYR_BASE%\scripts\uncrustify.cfg my_source_file.c
+
+On Linux systems, you can install uncrustify with
+
+.. code-block:: bash
+
+   sudo apt install uncrustify
+
+For Windows installation instructions see the `sourceforge listing for
+uncrustify <https://sourceforge.net/projects/uncrustify>`_.
 
 Coding Style
 ************
@@ -255,7 +333,6 @@ project's style and naming conventions.
 
 .. _Linux kernel coding style:
    https://kernel.org/doc/html/latest/process/coding-style.html
-
 
 In general, follow the `Linux kernel coding style`_, with the
 following exceptions:
@@ -268,15 +345,22 @@ following exceptions:
   comment, ``//``, is not allowed.
 * Use ``/**  */`` for doxygen comments that need to appear in the documentation.
 
-The Linux kernel GPL-licensed tool ``checkpatch`` is used to check coding
-style conformity. Checkpatch is available in the scripts directory. To invoke
-it when committing code, edit your *.git/hooks/pre-commit* file to contain:
+
+The Linux kernel GPL-licensed tool ``checkpatch`` is used to check
+coding style conformity.
+
+.. note::
+   checkpatch does not currently run on Windows.
+
+Checkpatch is available in the scripts directory. To invoke it when committing
+code, make the file *$ZEPHYR_BASE/.git/hooks/pre-commit* executable and edit
+it to contain:
 
 .. code-block:: bash
 
     #!/bin/sh
     set -e exec
-    exec git diff --cached | ${ZEPHYR_BASE}/scripts/checkpatch.pl - || true
+    exec git diff --cached | ${ZEPHYR_BASE}/scripts/checkpatch.pl -
 
 .. _Contribution workflow:
 
@@ -300,31 +384,31 @@ workflow here:
    https://github.com/zephyrproject-rtos/zephyr#fork-destination-box
 
 #. `Create a Fork of Zephyr`_
-   to your personal account on GitHub.  (Click on the fork button in the top
+   to your personal account on GitHub. (Click on the fork button in the top
    right corner of the Zephyr project repo page in GitHub.)
 
 #. On your development computer, clone the fork you just made::
 
-     $ git clone https://github.com/<your github id>/zephyr
+     git clone https://github.com/<your github id>/zephyr
 
    This would be a good time to let Git know about the upstream repo too::
 
-     $ git remote add upstream https://github.com/zephyrproject-rtos/zephyr.git
+     git remote add upstream https://github.com/zephyrproject-rtos/zephyr.git
 
    and verify the remote repos::
 
-     $ git remote -v
+     git remote -v
 
 #. Create a topic branch (off of master) for your work (if you're addressing
    an issue, we suggest including the issue number in the branch name)::
 
-     $ git checkout master
-     $ git checkout -b fix_comment_typo
+     git checkout master
+     git checkout -b fix_comment_typo
 
    Some Zephyr subsystems do development work on a separate branch from
    master so you may need to indicate this in your checkout::
 
-     $ git checkout -b fix_out_of_date_patch origin/net
+     git checkout -b fix_out_of_date_patch origin/net
 
 #. Make changes, test locally, change, test, test again, ...  (Check out the
    prior chapter on `sanitycheck`_ as well).
@@ -332,19 +416,19 @@ workflow here:
 #. When things look good, start the pull request process by adding your changed
    files::
 
-     $ git add [file(s) that changed, add -p if you want to be more specific]
+     git add [file(s) that changed, add -p if you want to be more specific]
 
    You can see files that are not yet staged using::
 
-     $ git status
+     git status
 
 #. Verify changes to be committed look as you expected::
 
-     $ git diff --cached
+     git diff --cached
 
 #. Commit your changes to your local repo::
 
-     $ git commit -s
+     git commit -s
 
    The ``-s`` option automatically adds your ``Signed-off-by:`` to your commit
    message.  Your commit will be rejected without this line that indicates your
@@ -354,7 +438,7 @@ workflow here:
 #. Push your topic branch with your changes to your fork in your personal
    GitHub account::
 
-     $ git push origin fix_comment_typo
+     git push origin fix_comment_typo
 
 #. In your web browser, go to your forked repo and click on the
    ``Compare & pull request`` button for the branch you just worked on and
@@ -380,21 +464,21 @@ workflow here:
    can create another branch to work on another issue. (Be sure to make your
    new branch off of master and not the previous branch.)::
 
-     $ git checkout master
-     $ git checkout -b fix_another_issue
+     git checkout master
+     git checkout -b fix_another_issue
 
    and use the same process described above to work on this new topic branch.
 
 #. If reviewers do request changes to your patch, you can interactively rebase
    commit(s) to fix review issues.  In your development repo::
 
-     $ git fetch --all
-     $ git rebase --ignore-whitespace upstream/master
+     git fetch --all
+     git rebase --ignore-whitespace upstream/master
 
    The ``--ignore-whitespace`` option stops ``git apply`` (called by rebase)
    from changing any whitespace. Continuing::
 
-     $ git rebase -i <offending-commit-id>^
+     git rebase -i <offending-commit-id>^
 
    In the interactive rebase editor, replace ``pick`` with ``edit`` to select
    a specific commit (if there's more than one in your pull request), or
@@ -404,16 +488,20 @@ workflow here:
    As before, inspect and test your changes. When ready, continue the
    patch submission::
 
-     $ git add [file(s)]
-     $ git rebase --continue
+     git add [file(s)]
+     git rebase --continue
 
    Update commit comment if needed, and continue::
 
-     $ git push --force origin fix_comment_typo
+     git push --force origin fix_comment_typo
 
    By force pushing your update, your original pull request will be updated
    with your changes so you won't need to resubmit the pull request.
 
+#. If the CI run fails, you will need to make changes to your code in order
+   to fix the issues and ammend your commits by rebasing as described above.
+   Additional information about the CI system can be found in
+   `Continuous Integration`_.
 
 Commit Guidelines
 *****************
@@ -445,9 +533,11 @@ Commit Message Body
 ===================
 
 When editing the commit message, please briefly explain what your change
-does and why it's needed. A change summary of ``"Fixes stuff"`` will be rejected. An
-empty change summary is only acceptable for trivial changes fully described by
-the commit title (e.g., ``doc: fix misspellings in CONTRIBUTING doc``)
+does and why it's needed. A change summary of ``"Fixes stuff"`` will be rejected.
+
+.. warning::
+   An empty change summary body is not permitted. Even for trivial changes, please
+   include a summary body in the commmit message.
 
 The description body of the commit message must include:
 
@@ -465,7 +555,8 @@ Other Commit Expectations
 * Commits must build cleanly when applied on top of each other, thus avoiding
   breaking bisectability.
 
-* Commits must pass the *scripts/checkpatch.pl* requirements.
+* Commits must pass all CI checks (see `Continuous Integration`_ for more
+  information)
 
 * Each commit must address a single identifiable issue and must be
   logically self-contained. Unrelated changes should be submitted as

@@ -7,6 +7,7 @@
 
 #include <arm/armv7-m.dtsi>
 #include <atmel/same70_mem.h>
+#include <dt-bindings/i2c/i2c.h>
 
 / {
 	cpus {
@@ -21,6 +22,8 @@
 	};
 
 	flash0: flash@400000 {
+		compatible = "soc-nv-flash";
+		label = "FLASH_0";
 		reg = <0x00400000 DT_FLASH_SIZE>;
 	};
 
@@ -31,10 +34,47 @@
 	};
 
 	soc {
+		i2c0: i2c@40018000 {
+			compatible = "atmel,sam-i2c-twihs";
+			clock-frequency = <I2C_BITRATE_STANDARD>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+			reg = <0x40018000 0x12B>;
+			interrupts = <19 0>;
+			peripheral-id = <19>;
+			label = "I2C_0";
+			status = "disabled";
+		};
+
+		i2c1: i2c@4001C000 {
+			compatible = "atmel,sam-i2c-twihs";
+			clock-frequency = <I2C_BITRATE_STANDARD>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+			reg = <0x4001C000 0x12B>;
+			interrupts = <20 0>;
+			peripheral-id = <20>;
+			label = "I2C_1";
+			status = "disabled";
+		};
+
+		i2c2: i2c@40060000 {
+			compatible = "atmel,sam-i2c-twihs";
+			clock-frequency = <I2C_BITRATE_STANDARD>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+			reg = <0x40060000 0x12B>;
+			interrupts = <41 0>;
+			peripheral-id = <41>;
+			label = "I2C_2";
+			status = "disabled";
+		};
+
 		uart0: uart@400E0800 {
 			compatible = "atmel,sam-uart";
 			reg = <0x400E0800 0x100>;
 			interrupts = <7 0>;
+			peripheral-id = <7>;
 			status = "disabled";
 			label = "UART_0";
 		};
@@ -43,6 +83,7 @@
 			compatible = "atmel,sam-uart";
 			reg = <0x400E0A00 0x100>;
 			interrupts = <8 0>;
+			peripheral-id = <8>;
 			status = "disabled";
 			label = "UART_1";
 		};
@@ -51,6 +92,7 @@
 			compatible = "atmel,sam-uart";
 			reg = <0x400E1A00 0x100>;
 			interrupts = <44 0>;
+			peripheral-id = <44>;
 			status = "disabled";
 			label = "UART_2";
 		};
@@ -59,6 +101,7 @@
 			compatible = "atmel,sam-uart";
 			reg = <0x400E1C00 0x100>;
 			interrupts = <45 0>;
+			peripheral-id = <45>;
 			status = "disabled";
 			label = "UART_3";
 		};
@@ -67,6 +110,7 @@
 			compatible = "atmel,sam-uart";
 			reg = <0x400E1E00 0x100>;
 			interrupts = <46 0>;
+			peripheral-id = <46>;
 			status = "disabled";
 			label = "UART_4";
 		};
@@ -75,6 +119,7 @@
 			compatible = "atmel,sam-usart";
 			reg = <0x40024000 0x100>;
 			interrupts = <13 0>;
+			peripheral-id = <13>;
 			status = "disabled";
 			label = "USART_0";
 		};
@@ -83,6 +128,7 @@
 			compatible = "atmel,sam-usart";
 			reg = <0x40028000 0x100>;
 			interrupts = <14 0>;
+			peripheral-id = <14>;
 			status = "disabled";
 			label = "USART_1";
 		};
@@ -91,6 +137,7 @@
 			compatible = "atmel,sam-usart";
 			reg = <0x4002C000 0x100>;
 			interrupts = <15 0>;
+			peripheral-id = <15>;
 			status = "disabled";
 			label = "USART_2";
 		};
@@ -99,6 +146,7 @@
 			compatible = "atmel,sam-afec";
 			reg = <0x4003C000 0x100>;
 			interrupts = <29 0>;
+			peripheral-id = <29>;
 			status = "disabled";
 			label = "ADC_0";
 		};
@@ -107,6 +155,7 @@
 			compatible = "atmel,sam-afec";
 			reg = <0x40064000 0x100>;
 			interrupts = <40 0>;
+			peripheral-id = <40>;
 			status = "disabled";
 			label = "ADC_1";
 		};

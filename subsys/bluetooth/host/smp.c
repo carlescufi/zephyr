@@ -3040,6 +3040,8 @@ static u8_t smp_ident_addr_info(struct bt_smp *smp, struct net_buf *buf)
 				bt_conn_identity_resolved(conn);
 			}
 		}
+
+		bt_id_add(keys);
 	}
 
 	smp->remote_dist &= ~BT_SMP_DIST_ID_KEY;
@@ -4336,6 +4338,7 @@ void bt_smp_update_keys(struct bt_conn *conn)
 	if (!conn->le.keys) {
 		BT_ERR("Unable to get keys for %s",
 		       bt_addr_le_str(&conn->le.dst));
+		smp_error(smp, BT_SMP_ERR_UNSPECIFIED);
 		return;
 	}
 

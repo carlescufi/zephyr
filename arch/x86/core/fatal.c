@@ -65,7 +65,8 @@ FUNC_NORETURN void _NanoFatalErrorHandler(unsigned int reason,
 		break;
 	}
 #if defined(CONFIG_STACK_CANARIES) || defined(CONFIG_STACK_SENTINEL) || \
-		defined(CONFIG_X86_STACK_PROTECTION)
+		defined(CONFIG_HW_STACK_PROTECTION) || \
+		defined(CONFIG_USERSPACE)
 	case _NANO_ERR_STACK_CHK_FAIL:
 		printk("***** Stack Check Fail! *****\n");
 		break;
@@ -102,7 +103,7 @@ FUNC_NORETURN void _NanoFatalErrorHandler(unsigned int reason,
 
 
 	/*
-	 * Error was fatal to a kernel task or a fiber; invoke the system
+	 * Error was fatal to a kernel task or a thread; invoke the system
 	 * fatal error handling policy defined for the platform.
 	 */
 
@@ -211,7 +212,7 @@ EXC_FUNC_NOCODE(IV_OVERFLOW);
 EXC_FUNC_NOCODE(IV_BOUND_RANGE);
 EXC_FUNC_NOCODE(IV_INVALID_OPCODE);
 EXC_FUNC_NOCODE(IV_DEVICE_NOT_AVAILABLE);
-#ifndef CONFIG_X86_STACK_PROTECTION
+#ifndef CONFIG_X86_ENABLE_TSS
 EXC_FUNC_NOCODE(IV_DOUBLE_FAULT);
 #endif
 EXC_FUNC_CODE(IV_INVALID_TSS);
@@ -232,17 +233,33 @@ EXC_FUNC_NOCODE(IV_MACHINE_CHECK);
 #define SGX	BIT(15)
 
 #ifdef CONFIG_X86_MMU
-static void dump_entry_flags(u32_t flags)
+static void dump_entry_flags(x86_page_entry_data_t flags)
 {
-	printk("0x%03x %s %s %s\n", flags,
-	       flags & MMU_ENTRY_PRESENT ? "Present" : "Non-present",
-	       flags & MMU_ENTRY_WRITE ? "Writable" : "Read-only",
-	       flags & MMU_ENTRY_USER ? "User" : "Supervisor");
+#ifdef CONFIG_X86_PAE_MODE
+	printk("0x%x%x %s, %s, %s, %s\n", (u32_t)(flags>>32),
+	       (u32_t)(flags),
+	       flags & (x86_page_entry_data_t)MMU_ENTRY_PRESENT ?
+	       "Present" : "Non-present",
+	       flags & (x86_page_entry_data_t)MMU_ENTRY_WRITE ?
+	       "Writable" : "Read-only",
+	       flags & (x86_page_entry_data_t)MMU_ENTRY_USER ?
+	       "User" : "Supervisor",
+	       flags & (x86_page_entry_data_t)MMU_ENTRY_EXECUTE_DISABLE ?
+	       "Execute Disable" : "Execute Enabled");
+#else
+	printk("0x%03x %s, %s, %s\n", flags,
+	       flags & (x86_page_entry_data_t)MMU_ENTRY_PRESENT ?
+	       "Present" : "Non-present",
+	       flags & (x86_page_entry_data_t)MMU_ENTRY_WRITE ?
+	       "Writable" : "Read-only",
+	       flags & (x86_page_entry_data_t)MMU_ENTRY_USER ?
+	       "User" : "Supervisor");
+#endif
 }
 
 static void dump_mmu_flags(void *addr)
 {
-	u32_t pde_flags, pte_flags;
+	x86_page_entry_data_t pde_flags, pte_flags;
 
 	_x86_mmu_get_flags(addr, &pde_flags, &pte_flags);
 
@@ -278,7 +295,7 @@ FUNC_NORETURN void page_fault_handler(const NANO_ESF *pEsf)
 _EXCEPTION_CONNECT_CODE(page_fault_handler, IV_PAGE_FAULT);
 #endif /* CONFIG_EXCEPTION_DEBUG */
 
-#ifdef CONFIG_X86_STACK_PROTECTION
+#ifdef CONFIG_X86_ENABLE_TSS
 static __noinit volatile NANO_ESF _df_esf;
 
 /* Very tiny stack; just enough for the bogus error code pushed by the CPU
@@ -303,13 +320,17 @@ struct task_state_segment _df_tss = {
 	.es = DATA_SEG,
 	.ss = DATA_SEG,
 	.eip = (u32_t)_df_handler_top,
+#ifdef CONFIG_X86_PAE_MODE
+	.cr3 = (u32_t)X86_MMU_PDPT
+#else
 	.cr3 = (u32_t)X86_MMU_PD
+#endif
 };
 
 static FUNC_NORETURN __used void _df_handler_bottom(void)
 {
 	/* We're back in the main hardware task on the interrupt stack */
-	u32_t pte_flags, pde_flags;
+	x86_page_entry_data_t pte_flags, pde_flags;
 	int reason;
 
 	/* Restore the top half so it is runnable again */
@@ -358,7 +379,11 @@ static FUNC_NORETURN __used void _df_handler_top(void)
 	_main_tss.es = DATA_SEG;
 	_main_tss.ss = DATA_SEG;
 	_main_tss.eip = (u32_t)_df_handler_bottom;
+#ifdef CONFIG_X86_PAE_MODE
+	_main_tss.cr3 = (u32_t)X86_MMU_PDPT;
+#else
 	_main_tss.cr3 = (u32_t)X86_MMU_PD;
+#endif
 
 	/* NT bit is set in EFLAGS so we will task switch back to _main_tss
 	 * and run _df_handler_bottom
@@ -372,4 +397,4 @@ static FUNC_NORETURN __used void _df_handler_top(void)
  */
 _X86_IDT_TSS_REGISTER(DF_TSS, -1, -1, IV_DOUBLE_FAULT, 0);
 
-#endif /* CONFIG_X86_STACK_PROTECTION */
+#endif /* CONFIG_X86_ENABLE_TSS */

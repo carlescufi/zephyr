@@ -34,6 +34,7 @@ extern "C" {
 /**
  * @brief Network packet management library
  * @defgroup net_pkt Network Packet Library
+ * @ingroup networking
  * @{
  */
 
@@ -65,12 +66,18 @@ struct net_pkt {
 
 	/** @cond ignore */
 
+#if defined(CONFIG_NET_ROUTING)
+	struct net_if *orig_iface; /* Original network interface */
+#endif
+
 	u8_t *appdata;	/* application data starts here */
 	u8_t *next_hdr;	/* where is the next header */
 
 	/* Filled by layer 2 when network packet is received. */
 	struct net_linkaddr lladdr_src;
 	struct net_linkaddr lladdr_dst;
+
+	u16_t data_len;         /* amount of payload data that can be added */
 
 	u16_t appdatalen;
 	u8_t ll_reserve;	/* link layer header length */
@@ -121,7 +128,7 @@ struct net_pkt {
 #endif /* CONFIG_NET_IPV6_FRAGMENT */
 #endif /* CONFIG_NET_IPV6 */
 
-#if defined(CONFIG_NET_L2_IEEE802154)
+#if defined(CONFIG_IEEE802154)
 	u8_t ieee802154_rssi; /* Received Signal Strength Indication */
 	u8_t ieee802154_lqi;  /* Link Quality Indicator */
 #endif
@@ -176,6 +183,23 @@ static inline void net_pkt_set_iface(struct net_pkt *pkt, struct net_if *iface)
 	 */
 	pkt->lladdr_src.type = iface->link_addr.type;
 	pkt->lladdr_dst.type = iface->link_addr.type;
+}
+
+static inline struct net_if *net_pkt_orig_iface(struct net_pkt *pkt)
+{
+#if defined(CONFIG_NET_ROUTING)
+	return pkt->orig_iface;
+#else
+	return pkt->iface;
+#endif
+}
+
+static inline void net_pkt_set_orig_iface(struct net_pkt *pkt,
+					  struct net_if *iface)
+{
+#if defined(CONFIG_NET_ROUTING)
+	pkt->orig_iface = iface;
+#endif
 }
 
 static inline u8_t net_pkt_family(struct net_pkt *pkt)
@@ -423,7 +447,7 @@ static inline void net_pkt_ll_swap(struct net_pkt *pkt)
 	net_pkt_ll_dst(pkt)->addr = addr;
 }
 
-#if defined(CONFIG_NET_L2_IEEE802154)
+#if defined(CONFIG_IEEE802154) || defined(CONFIG_IEEE802154_RAW_MODE)
 static inline u8_t net_pkt_ieee802154_rssi(struct net_pkt *pkt)
 {
 	return pkt->ieee802154_rssi;
@@ -460,18 +484,33 @@ static inline void net_pkt_set_src_ipv6_addr(struct net_pkt *pkt)
 /* @endcond */
 
 /**
- * @brief Create a TX net_pkt slab that is used when sending user
- * specified data to network.
+ * @brief Create a net_pkt slab
  *
- * @param name Name of the pool.
+ * A net_pkt slab is used to store meta-information about
+ * network packets. It must be coupled with a data fragment pool
+ * (:c:macro:`NET_PKT_DATA_POOL_DEFINE`) used to store the actual
+ * packet data. The macro can be used by an application to define
+ * additional custom per-context TX packet slabs (see
+ * :c:func:`net_context_setup_pools`).
+ *
+ * @param name Name of the slab.
  * @param count Number of net_pkt in this slab.
  */
-#define NET_PKT_TX_SLAB_DEFINE(name, count)				\
+#define NET_PKT_SLAB_DEFINE(name, count)				\
 	K_MEM_SLAB_DEFINE(name, sizeof(struct net_pkt), count, 4)
 
+/* Backward compatibility macro */
+#define NET_PKT_TX_SLAB_DEFINE(name, count) NET_PKT_SLAB_DEFINE(name, count)
+
 /**
- * @brief Create a DATA net_buf pool that is used when sending user
- * specified data to network.
+ * @brief Create a data fragment net_buf pool
+ *
+ * A net_buf pool is used to store actual data for
+ * network packets. It must be coupled with a net_pkt slab
+ * (:c:macro:`NET_PKT_SLAB_DEFINE`) used to store the packet
+ * meta-information. The macro can be used by an application to
+ * define additional custom per-context TX packet pools (see
+ * :c:func:`net_context_setup_pools`).
  *
  * @param name Name of the pool.
  * @param count Number of net_buf in this pool.
@@ -1077,7 +1116,7 @@ struct net_buf *net_frag_read(struct net_buf *frag, u16_t offset,
  * length of data is placed in multiple fragments, this function will skip from
  * all fragments until it reaches N number of bytes. This function is useful
  * when unwanted data (e.g. reserved or not supported data in message) is part
- * of fragment and want to skip it.
+ * of fragment and we want to skip it.
  *
  * @param frag Network buffer fragment.
  * @param offset Offset of input buffer.
@@ -1403,6 +1442,19 @@ void net_pkt_get_info(struct k_mem_slab **rx,
  */
 
 int net_pkt_get_src_addr(struct net_pkt *pkt,
+			 struct sockaddr *addr,
+			 socklen_t addrlen);
+
+/**
+ * @brief Get destination socket address.
+ *
+ * @param pkt Network packet
+ * @param addr Destination socket address
+ * @param addrlen The length of destination socket address
+ * @return 0 on success, <0 otherwise.
+ */
+
+int net_pkt_get_dst_addr(struct net_pkt *pkt,
 			 struct sockaddr *addr,
 			 socklen_t addrlen);
 

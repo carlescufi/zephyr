@@ -23,12 +23,24 @@ static int i2c_stm32_runtime_configure(struct device *dev, u32_t config)
 	const struct i2c_stm32_config *cfg = DEV_CFG(dev);
 	struct i2c_stm32_data *data = DEV_DATA(dev);
 	I2C_TypeDef *i2c = cfg->i2c;
-	u32_t clock;
+	u32_t clock = 0;
 
-	data->dev_config = config;
+#if defined(CONFIG_SOC_SERIES_STM32F3X) || defined(CONFIG_SOC_SERIES_STM32F0X)
+	LL_RCC_ClocksTypeDef rcc_clocks;
 
+	/*
+	 * STM32F0/3 I2C's independent clock source supports only
+	 * HSI and SYSCLK, not APB1. We force clock variable to
+	 * SYSCLK frequency.
+	 */
+	LL_RCC_GetSystemClocksFreq(&rcc_clocks);
+	clock = rcc_clocks.SYSCLK_Frequency;
+#else
 	clock_control_get_rate(device_get_binding(STM32_CLOCK_CONTROL_NAME),
 			(clock_control_subsys_t *) &cfg->pclken, &clock);
+#endif /* CONFIG_SOC_SERIES_STM32F3X) || CONFIG_SOC_SERIES_STM32F0X */
+
+	data->dev_config = config;
 
 	LL_I2C_Disable(i2c);
 	LL_I2C_SetMode(i2c, LL_I2C_MODE_I2C);
@@ -49,24 +61,47 @@ static int i2c_stm32_transfer(struct device *dev, struct i2c_msg *msg,
 	LL_I2C_Enable(i2c);
 
 	current = msg;
+	/*
+	 * Set I2C_MSG_RESTART flag on first message in order to send start
+	 * condition
+	 */
+	current->flags |= I2C_MSG_RESTART;
 	while (num_msgs > 0) {
-		unsigned int flags = 0;
+		u8_t *next_msg_flags = NULL;
 
-		if (current->len > 255)
-			return -EINVAL;
-
-		/* do NOT issue the i2c stop condition at the end of transfer */
 		if (num_msgs > 1) {
 			next = current + 1;
+			next_msg_flags = &(next->flags);
+
+			/*
+			 * Stop or restart condition between messages
+			 * of different directions is required
+			 */
 			if (OPERATION(current) != OPERATION(next)) {
-				flags = I2C_MSG_RESTART;
+				if (!(next->flags & I2C_MSG_RESTART)) {
+					ret = -EINVAL;
+					break;
+				}
 			}
 		}
 
+		if (current->len > 255) {
+			ret = -EINVAL;
+			break;
+		}
+
+		/* Stop condition is required for the last message */
+		if ((num_msgs == 1) && !(current->flags & I2C_MSG_STOP)) {
+			ret = -EINVAL;
+			break;
+		}
+
 		if ((current->flags & I2C_MSG_RW_MASK) == I2C_MSG_WRITE) {
-			ret = stm32_i2c_msg_write(dev, current, flags, slave);
+			ret = stm32_i2c_msg_write(dev, current, next_msg_flags,
+						  slave);
 		} else {
-			ret = stm32_i2c_msg_read(dev, current, flags, slave);
+			ret = stm32_i2c_msg_read(dev, current, next_msg_flags,
+						 slave);
 		}
 
 		if (ret < 0) {
@@ -102,6 +137,34 @@ static int i2c_stm32_init(struct device *dev)
 
 	__ASSERT_NO_MSG(clock);
 	clock_control_on(clock, (clock_control_subsys_t *) &cfg->pclken);
+
+#if defined(CONFIG_SOC_SERIES_STM32F3X) || defined(CONFIG_SOC_SERIES_STM32F0X)
+	/*
+	 * STM32F0/3 I2C's independent clock source supports only
+	 * HSI and SYSCLK, not APB1. We force I2C clock source to SYSCLK.
+	 * I2C2 on STM32F0 uses APB1 clock as I2C clock source
+	 */
+
+	switch ((u32_t)cfg->i2c) {
+#ifdef CONFIG_I2C_1
+	case CONFIG_I2C_1_BASE_ADDRESS:
+		LL_RCC_SetI2CClockSource(LL_RCC_I2C1_CLKSOURCE_SYSCLK);
+		break;
+#endif /* CONFIG_I2C_1 */
+
+#if defined(CONFIG_SOC_SERIES_STM32F3X) && defined(CONFIG_I2C_2)
+	case CONFIG_I2C_2_BASE_ADDRESS:
+		LL_RCC_SetI2CClockSource(LL_RCC_I2C2_CLKSOURCE_SYSCLK);
+		break;
+#endif /* CONFIG_SOC_SERIES_STM32F3X && CONFIG_I2C_2 */
+
+#ifdef CONFIG_I2C_3
+	case CONFIG_I2C_3_BASE_ADDRESS:
+		LL_RCC_SetI2CClockSource(LL_RCC_I2C3_CLKSOURCE_SYSCLK);
+		break;
+#endif /* CONFIG_I2C_3 */
+	}
+#endif /* CONFIG_SOC_SERIES_STM32F3X) || CONFIG_SOC_SERIES_STM32F0X */
 
 	bitrate_cfg = _i2c_map_dt_bitrate(cfg->bitrate);
 
@@ -142,6 +205,11 @@ DEVICE_AND_API_INIT(i2c_stm32_1, CONFIG_I2C_1_NAME, &i2c_stm32_init,
 #ifdef CONFIG_I2C_STM32_INTERRUPT
 static void i2c_stm32_irq_config_func_1(struct device *dev)
 {
+#ifdef CONFIG_I2C_STM32_COMBINED_INTERRUPT
+	IRQ_CONNECT(CONFIG_I2C_1_COMBINED_IRQ, CONFIG_I2C_1_COMBINED_IRQ_PRI,
+		   stm32_i2c_combined_isr, DEVICE_GET(i2c_stm32_1), 0);
+	irq_enable(CONFIG_I2C_1_COMBINED_IRQ);
+#else
 	IRQ_CONNECT(CONFIG_I2C_1_EVENT_IRQ, CONFIG_I2C_1_EVENT_IRQ_PRI,
 		   stm32_i2c_event_isr, DEVICE_GET(i2c_stm32_1), 0);
 	irq_enable(CONFIG_I2C_1_EVENT_IRQ);
@@ -149,6 +217,7 @@ static void i2c_stm32_irq_config_func_1(struct device *dev)
 	IRQ_CONNECT(CONFIG_I2C_1_ERROR_IRQ, CONFIG_I2C_1_ERROR_IRQ_PRI,
 		   stm32_i2c_error_isr, DEVICE_GET(i2c_stm32_1), 0);
 	irq_enable(CONFIG_I2C_1_ERROR_IRQ);
+#endif
 }
 #endif
 
@@ -182,6 +251,11 @@ DEVICE_AND_API_INIT(i2c_stm32_2, CONFIG_I2C_2_NAME, &i2c_stm32_init,
 #ifdef CONFIG_I2C_STM32_INTERRUPT
 static void i2c_stm32_irq_config_func_2(struct device *dev)
 {
+#ifdef CONFIG_I2C_STM32_COMBINED_INTERRUPT
+	IRQ_CONNECT(CONFIG_I2C_2_COMBINED_IRQ, CONFIG_I2C_2_COMBINED_IRQ_PRI,
+		   stm32_i2c_combined_isr, DEVICE_GET(i2c_stm32_2), 0);
+	irq_enable(CONFIG_I2C_2_COMBINED_IRQ);
+#else
 	IRQ_CONNECT(CONFIG_I2C_2_EVENT_IRQ, CONFIG_I2C_2_EVENT_IRQ_PRI,
 		   stm32_i2c_event_isr, DEVICE_GET(i2c_stm32_2), 0);
 	irq_enable(CONFIG_I2C_2_EVENT_IRQ);
@@ -189,6 +263,7 @@ static void i2c_stm32_irq_config_func_2(struct device *dev)
 	IRQ_CONNECT(CONFIG_I2C_2_ERROR_IRQ, CONFIG_I2C_2_ERROR_IRQ_PRI,
 		   stm32_i2c_error_isr, DEVICE_GET(i2c_stm32_2), 0);
 	irq_enable(CONFIG_I2C_2_ERROR_IRQ);
+#endif
 }
 #endif
 

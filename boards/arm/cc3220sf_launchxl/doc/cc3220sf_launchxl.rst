@@ -7,7 +7,8 @@ Overview
 ********
 The SimpleLink Wi-Fi CC3220SF LaunchPad development kit (CC3220SF-LAUNCHXL)
 highlights CC3220SF, a single-chip wireless microcontroller (MCU) with
-1MB Flash, 256KB of RAM and enhanced security features.
+1MB internal flash, 4MB external serial flash, 256KB of RAM and enhanced
+security features.
 
 See the `TI CC3220 Product Page`_ for details.
 
@@ -35,7 +36,7 @@ Hardware
 The CC3220SF SoC has two MCUs:
 
 #. Applications MCU - an ARM |reg| Cortex |reg|-M4 Core at 80 MHz, with 256Kb RAM,
-   and access to external serial 1Mb flash with bootloader and peripheral
+   and access to external serial 4MB flash with bootloader and peripheral
    drivers in ROM.
 
 #. Network Coprocessor (NWP) - a dedicated ARM MCU, which completely
@@ -56,6 +57,14 @@ driver support.
 +-----------+------------+-----------------------+
 | GPIO      | on-chip    | gpio                  |
 +-----------+------------+-----------------------+
+| I2C       | on-chip    | i2c                   |
++-----------+------------+-----------------------+
+
+.. note::
+
+   For consistency with TI SimpleLink SDK and BoosterPack examples,
+   the I2C driver defaults to I2C_BITRATE_FAST mode (400 kHz) bus speed
+   on bootup.
 
 The accelerometer, temperature sensors, or other peripherals
 accessible through the BoosterPack, are not currently supported.
@@ -124,15 +133,22 @@ Prerequisites:
 
 #. Update the service pack, and place board in "Development Mode".
 
-   Follow the instructions in Section 3.4 "Download the Application",
-   in the `CC3220 Getting Started Guide`_, except for steps 5 and 6 which
-   select an MCU image.
+   Setting "Development Mode" enables the JTAG interface, necessary
+   for subsequent use of OpenOCD and updating XDS110 firmware.
+
+   Follow the instructions in Section 2.4 "Download the Application",
+   in the `CC3220 Getting Started Guide`_, except for steps 5 and 6 in
+   Section 2.4.1 which select an MCU image.
 
 #. Ensure the XDS-110 emulation firmware is updated.
 
    Download and install the latest `XDS-110 emulation package`_.
+
    Follow the directions here to update the firmware:
    http://processors.wiki.ti.com/index.php/XDS110#Updating_the_XDS110_Firmware
+
+   Note that the emulation package install may place the xdsdfu utility
+   in <install_dir>/ccs_base/common/uscif/xds110/.
 
 #. Ensure CONFIG_XIP=y is set.
 
@@ -210,7 +226,7 @@ CC32xx Wiki:
    http://www.ti.com/lit/ug/swru464/swru464.pdf
 
 .. _CC3220 Getting Started Guide:
-   http://www.ti.com/lit/ug/swru461/swru461.pdf
+   http://www.ti.com/lit/ug/swru461a/swru461a.pdf
 
 .. _UniFlash:
    http://processors.wiki.ti.com/index.php/Category:CCS_UniFlash
@@ -222,4 +238,4 @@ CC32xx Wiki:
    http://www.ti.com/lit/ug/swru463/swru463.pdf
 
 ..  _XDS-110 emulation package:
-   http://processors.wiki.ti.com/index.php/XDS_Emulation_Software_Package#XDS110_Reset_Download
+   http://processors.wiki.ti.com/index.php/XDS_Emulation_Software_Package#XDS_Emulation_Software_.28emupack.29_Download

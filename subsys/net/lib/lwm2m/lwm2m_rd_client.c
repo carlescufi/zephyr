@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2017 Linaro Limited
+ * Copyright (c) 2017 Open Source Foundries Limited.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -53,7 +54,7 @@
 #include <init.h>
 #include <misc/printk.h>
 #include <net/net_pkt.h>
-#include <net/zoap.h>
+#include <net/coap.h>
 #include <net/lwm2m.h>
 
 #include "lwm2m_object.h"
@@ -62,7 +63,7 @@
 #define LWM2M_RD_CLIENT_URI "rd"
 
 #define SECONDS_TO_UPDATE_EARLY	2
-#define STATE_MACHINE_UPDATE_INTERVAL 500
+#define STATE_MACHINE_UPDATE_INTERVAL K_MSEC(500)
 
 #define LWM2M_PEER_PORT		CONFIG_LWM2M_PEER_PORT
 #define LWM2M_BOOTSTRAP_PORT	CONFIG_LWM2M_BOOTSTRAP_PORT
@@ -109,10 +110,6 @@ struct lwm2m_rd_client_info {
 
 	lwm2m_ctx_event_cb_t event_cb;
 };
-
-static K_THREAD_STACK_DEFINE(lwm2m_rd_client_thread_stack,
-			     CONFIG_LWM2M_RD_CLIENT_STACK_SIZE);
-struct k_thread lwm2m_rd_client_thread_data;
 
 /* buffers */
 static char query_buffer[64]; /* allocate some data for queries and updates */
@@ -164,37 +161,51 @@ static u8_t get_sm_state(int index)
 static int find_clients_index(const struct sockaddr *addr)
 {
 	int index = -1, i;
-	struct sockaddr *remote;
+	struct sockaddr *remote = NULL;
+	struct net_app_ctx *net_app_ctx;
 
 	for (i = 0; i < client_count; i++) {
-		remote = &clients[i].ctx->net_app_ctx.default_ctx->remote;
-		if (clients[i].ctx) {
-			if (remote->sa_family != addr->sa_family) {
-				continue;
-			}
+		if (!clients[i].ctx) {
+			continue;
+		}
+
+		net_app_ctx = &clients[i].ctx->net_app_ctx;
+
+#if defined(CONFIG_NET_APP_DTLS)
+		if (net_app_ctx->dtls.ctx) {
+			remote = &net_app_ctx->dtls.ctx->remote;
+		}
+#endif
+
+		if (!remote) {
+			remote = &net_app_ctx->default_ctx->remote;
+		}
+
+		if (remote->sa_family != addr->sa_family) {
+			continue;
+		}
 
 #if defined(CONFIG_NET_IPV6)
-			if (remote->sa_family == AF_INET6 &&
-			    net_ipv6_addr_cmp(&net_sin6(remote)->sin6_addr,
-					      &net_sin6(addr)->sin6_addr) &&
-			    net_sin6(remote)->sin6_port ==
-					net_sin6(addr)->sin6_port) {
-				index = i;
-				break;
-			}
+		if (remote->sa_family == AF_INET6 &&
+		    net_ipv6_addr_cmp(&net_sin6(remote)->sin6_addr,
+				      &net_sin6(addr)->sin6_addr) &&
+		    net_sin6(remote)->sin6_port ==
+				net_sin6(addr)->sin6_port) {
+			index = i;
+			break;
+		}
 #endif
 
 #if defined(CONFIG_NET_IPV4)
-			if (remote->sa_family == AF_INET &&
-			    net_ipv4_addr_cmp(&net_sin(remote)->sin_addr,
-					      &net_sin(addr)->sin_addr) &&
-			    net_sin(remote)->sin_port ==
-					net_sin(addr)->sin_port) {
-				index = i;
-				break;
-			}
-#endif
+		if (remote->sa_family == AF_INET &&
+		    net_ipv4_addr_cmp(&net_sin(remote)->sin_addr,
+				      &net_sin(addr)->sin_addr) &&
+		    net_sin(remote)->sin_port ==
+				net_sin(addr)->sin_port) {
+			index = i;
+			break;
 		}
+#endif
 	}
 
 	return index;
@@ -263,17 +274,17 @@ void engine_trigger_update(void)
 
 /* state machine reply callbacks */
 
-static int do_bootstrap_reply_cb(const struct zoap_packet *response,
-				 struct zoap_reply *reply,
+static int do_bootstrap_reply_cb(const struct coap_packet *response,
+				 struct coap_reply *reply,
 				 const struct sockaddr *from)
 {
 	u8_t code;
 	int index;
 
-	code = zoap_header_get_code(response);
+	code = coap_header_get_code(response);
 	SYS_LOG_DBG("Bootstrap callback (code:%u.%u)",
-		    ZOAP_RESPONSE_CODE_CLASS(code),
-		    ZOAP_RESPONSE_CODE_DETAIL(code));
+		    COAP_RESPONSE_CODE_CLASS(code),
+		    COAP_RESPONSE_CODE_DETAIL(code));
 
 	index = find_clients_index(from);
 	if (index < 0) {
@@ -281,20 +292,20 @@ static int do_bootstrap_reply_cb(const struct zoap_packet *response,
 		return 0;
 	}
 
-	if (code == ZOAP_RESPONSE_CODE_CHANGED) {
+	if (code == COAP_RESPONSE_CODE_CHANGED) {
 		SYS_LOG_DBG("Considered done!");
 		set_sm_state(index, ENGINE_BOOTSTRAP_DONE);
-	} else if (code == ZOAP_RESPONSE_CODE_NOT_FOUND) {
+	} else if (code == COAP_RESPONSE_CODE_NOT_FOUND) {
 		SYS_LOG_ERR("Failed: NOT_FOUND.  Not Retrying.");
 		set_sm_state(index, ENGINE_DO_REGISTRATION);
-	} else if (code == ZOAP_RESPONSE_CODE_FORBIDDEN) {
+	} else if (code == COAP_RESPONSE_CODE_FORBIDDEN) {
 		SYS_LOG_ERR("Failed: 4.03 - Forbidden.  Not Retrying.");
 		set_sm_state(index, ENGINE_DO_REGISTRATION);
 	} else {
 		/* TODO: Read payload for error message? */
 		SYS_LOG_ERR("Failed with code %u.%u. Retrying ...",
-			    ZOAP_RESPONSE_CODE_CLASS(code),
-			    ZOAP_RESPONSE_CODE_DETAIL(code));
+			    COAP_RESPONSE_CODE_CLASS(code),
+			    COAP_RESPONSE_CODE_DETAIL(code));
 		set_sm_state(index, ENGINE_INIT);
 	}
 
@@ -309,18 +320,18 @@ static void do_bootstrap_timeout_cb(struct lwm2m_message *msg)
 	sm_handle_timeout_state(msg, ENGINE_INIT);
 }
 
-static int do_registration_reply_cb(const struct zoap_packet *response,
-				    struct zoap_reply *reply,
+static int do_registration_reply_cb(const struct coap_packet *response,
+				    struct coap_reply *reply,
 				    const struct sockaddr *from)
 {
-	struct zoap_option options[2];
+	struct coap_option options[2];
 	u8_t code;
 	int ret, index;
 
-	code = zoap_header_get_code(response);
+	code = coap_header_get_code(response);
 	SYS_LOG_DBG("Registration callback (code:%u.%u)",
-		    ZOAP_RESPONSE_CODE_CLASS(code),
-		    ZOAP_RESPONSE_CODE_DETAIL(code));
+		    COAP_RESPONSE_CODE_CLASS(code),
+		    COAP_RESPONSE_CODE_DETAIL(code));
 
 	index = find_clients_index(from);
 	if (index < 0) {
@@ -329,8 +340,8 @@ static int do_registration_reply_cb(const struct zoap_packet *response,
 	}
 
 	/* check state and possibly set registration to done */
-	if (code == ZOAP_RESPONSE_CODE_CREATED) {
-		ret = zoap_find_options(response, ZOAP_OPTION_LOCATION_PATH,
+	if (code == COAP_RESPONSE_CODE_CREATED) {
+		ret = coap_find_options(response, COAP_OPTION_LOCATION_PATH,
 					options, 2);
 		if (ret < 0) {
 			return ret;
@@ -359,11 +370,11 @@ static int do_registration_reply_cb(const struct zoap_packet *response,
 			    clients[index].server_ep);
 
 		return 0;
-	} else if (code == ZOAP_RESPONSE_CODE_NOT_FOUND) {
+	} else if (code == COAP_RESPONSE_CODE_NOT_FOUND) {
 		SYS_LOG_ERR("Failed: NOT_FOUND.  Not Retrying.");
 		set_sm_state(index, ENGINE_REGISTRATION_DONE);
 		return 0;
-	} else if (code == ZOAP_RESPONSE_CODE_FORBIDDEN) {
+	} else if (code == COAP_RESPONSE_CODE_FORBIDDEN) {
 		SYS_LOG_ERR("Failed: 4.03 - Forbidden.  Not Retrying.");
 		set_sm_state(index, ENGINE_REGISTRATION_DONE);
 		return 0;
@@ -372,8 +383,8 @@ static int do_registration_reply_cb(const struct zoap_packet *response,
 	/* TODO: Read payload for error message? */
 	/* Possible error response codes: 4.00 Bad request */
 	SYS_LOG_ERR("failed with code %u.%u. Re-init network",
-		    ZOAP_RESPONSE_CODE_CLASS(code),
-		    ZOAP_RESPONSE_CODE_DETAIL(code));
+		    COAP_RESPONSE_CODE_CLASS(code),
+		    COAP_RESPONSE_CODE_DETAIL(code));
 	set_sm_state(index, ENGINE_INIT);
 	return 0;
 }
@@ -386,17 +397,17 @@ static void do_registration_timeout_cb(struct lwm2m_message *msg)
 	sm_handle_timeout_state(msg, ENGINE_INIT);
 }
 
-static int do_update_reply_cb(const struct zoap_packet *response,
-			      struct zoap_reply *reply,
+static int do_update_reply_cb(const struct coap_packet *response,
+			      struct coap_reply *reply,
 			      const struct sockaddr *from)
 {
 	u8_t code;
 	int index;
 
-	code = zoap_header_get_code(response);
+	code = coap_header_get_code(response);
 	SYS_LOG_INF("Update callback (code:%u.%u)",
-		    ZOAP_RESPONSE_CODE_CLASS(code),
-		    ZOAP_RESPONSE_CODE_DETAIL(code));
+		    COAP_RESPONSE_CODE_CLASS(code),
+		    COAP_RESPONSE_CODE_DETAIL(code));
 
 	index = find_clients_index(from);
 	if (index < 0) {
@@ -405,8 +416,8 @@ static int do_update_reply_cb(const struct zoap_packet *response,
 	}
 
 	/* If NOT_FOUND just continue on */
-	if ((code == ZOAP_RESPONSE_CODE_CHANGED) ||
-	    (code == ZOAP_RESPONSE_CODE_CREATED)) {
+	if ((code == COAP_RESPONSE_CODE_CHANGED) ||
+	    (code == COAP_RESPONSE_CODE_CREATED)) {
 		set_sm_state(index, ENGINE_REGISTRATION_DONE);
 		SYS_LOG_INF("Update Done");
 		return 0;
@@ -415,8 +426,8 @@ static int do_update_reply_cb(const struct zoap_packet *response,
 	/* TODO: Read payload for error message? */
 	/* Possible error response codes: 4.00 Bad request & 4.04 Not Found */
 	SYS_LOG_ERR("Failed with code %u.%u. Retrying registration",
-		    ZOAP_RESPONSE_CODE_CLASS(code),
-		    ZOAP_RESPONSE_CODE_DETAIL(code));
+		    COAP_RESPONSE_CODE_CLASS(code),
+		    COAP_RESPONSE_CODE_DETAIL(code));
 	set_sm_state(index, ENGINE_DO_REGISTRATION);
 
 	return 0;
@@ -430,17 +441,17 @@ static void do_update_timeout_cb(struct lwm2m_message *msg)
 	sm_handle_timeout_state(msg, ENGINE_DO_REGISTRATION);
 }
 
-static int do_deregister_reply_cb(const struct zoap_packet *response,
-				  struct zoap_reply *reply,
+static int do_deregister_reply_cb(const struct coap_packet *response,
+				  struct coap_reply *reply,
 				  const struct sockaddr *from)
 {
 	u8_t code;
 	int index;
 
-	code = zoap_header_get_code(response);
+	code = coap_header_get_code(response);
 	SYS_LOG_DBG("Deregister callback (code:%u.%u)",
-		    ZOAP_RESPONSE_CODE_CLASS(code),
-		    ZOAP_RESPONSE_CODE_DETAIL(code));
+		    COAP_RESPONSE_CODE_CLASS(code),
+		    COAP_RESPONSE_CODE_DETAIL(code));
 
 	index = find_clients_index(from);
 	if (index < 0) {
@@ -448,13 +459,13 @@ static int do_deregister_reply_cb(const struct zoap_packet *response,
 		return 0;
 	}
 
-	if (code == ZOAP_RESPONSE_CODE_DELETED) {
+	if (code == COAP_RESPONSE_CODE_DELETED) {
 		SYS_LOG_DBG("Deregistration success");
 		set_sm_state(index, ENGINE_DEREGISTERED);
 	} else {
 		SYS_LOG_ERR("failed with code %u.%u",
-			    ZOAP_RESPONSE_CODE_CLASS(code),
-			    ZOAP_RESPONSE_CODE_DETAIL(code));
+			    COAP_RESPONSE_CODE_CLASS(code),
+			    COAP_RESPONSE_CODE_DETAIL(code));
 		if (get_sm_state(index) == ENGINE_DEREGISTER_SENT) {
 			set_sm_state(index, ENGINE_DEREGISTER_FAILED);
 		}
@@ -506,6 +517,7 @@ static int sm_do_bootstrap(int index)
 	struct lwm2m_message *msg;
 	struct net_app_ctx *app_ctx = NULL;
 	int ret;
+	struct sockaddr *remote = NULL;
 
 	if (clients[index].use_bootstrap &&
 	    clients[index].bootstrapped == 0 &&
@@ -517,8 +529,8 @@ static int sm_do_bootstrap(int index)
 			return -ENOMEM;
 		}
 
-		msg->type = ZOAP_TYPE_CON;
-		msg->code = ZOAP_METHOD_POST;
+		msg->type = COAP_TYPE_CON;
+		msg->code = COAP_METHOD_POST;
 		msg->mid = 0;
 		msg->reply_cb = do_bootstrap_reply_cb;
 		msg->message_timeout_cb = do_bootstrap_timeout_cb;
@@ -528,18 +540,29 @@ static int sm_do_bootstrap(int index)
 			goto cleanup;
 		}
 
-		zoap_add_option(&msg->zpkt, ZOAP_OPTION_URI_PATH,
-				"bs", strlen("bs"));
+		/* TODO: handle return error */
+		coap_packet_append_option(&msg->cpkt, COAP_OPTION_URI_PATH,
+					  "bs", strlen("bs"));
 
-		snprintf(query_buffer, sizeof(query_buffer) - 1,
+		snprintk(query_buffer, sizeof(query_buffer) - 1,
 			 "ep=%s", clients[index].ep_name);
-		zoap_add_option(&msg->zpkt, ZOAP_OPTION_URI_QUERY,
-				query_buffer, strlen(query_buffer));
+		/* TODO: handle return error */
+		coap_packet_append_option(&msg->cpkt, COAP_OPTION_URI_QUERY,
+					  query_buffer, strlen(query_buffer));
 
 		/* log the bootstrap attempt */
+#if defined(CONFIG_NET_APP_DTLS)
+		if (app_ctx->dtls.ctx) {
+			remote = &app_ctx->dtls.ctx->remote;
+		}
+#endif
+
+		if (!remote) {
+			remote = &app_ctx->default_ctx->remote;
+		}
+
 		SYS_LOG_DBG("Register ID with bootstrap server [%s] as '%s'",
-			    lwm2m_sprint_ip_addr(
-				&app_ctx->default_ctx->remote),
+			    lwm2m_sprint_ip_addr(remote),
 			    query_buffer);
 
 		ret = lwm2m_send_message(msg);
@@ -554,7 +577,7 @@ static int sm_do_bootstrap(int index)
 	return 0;
 
 cleanup:
-	lwm2m_release_message(msg);
+	lwm2m_reset_message(msg, true);
 	return ret;
 }
 
@@ -603,14 +626,14 @@ static int sm_bootstrap_done(int index)
 }
 
 static int sm_send_registration(int index, bool send_obj_support_data,
-				zoap_reply_t reply_cb,
+				coap_reply_t reply_cb,
 				lwm2m_message_timeout_cb_t timeout_cb)
 {
 	struct net_app_ctx *app_ctx = NULL;
 	struct lwm2m_message *msg;
-	u8_t *payload;
-	u16_t client_data_len, len;
+	u16_t client_data_len;
 	int ret;
+	struct sockaddr *remote = NULL;
 
 	app_ctx = &clients[index].ctx->net_app_ctx;
 	msg = lwm2m_get_message(clients[index].ctx);
@@ -622,8 +645,8 @@ static int sm_send_registration(int index, bool send_obj_support_data,
 	/* remember the last reg time */
 	clients[index].last_update = k_uptime_get();
 
-	msg->type = ZOAP_TYPE_CON;
-	msg->code = ZOAP_METHOD_POST;
+	msg->type = COAP_TYPE_CON;
+	msg->code = COAP_METHOD_POST;
 	msg->mid = 0;
 	msg->reply_cb = reply_cb;
 	msg->message_timeout_cb = timeout_cb;
@@ -633,48 +656,54 @@ static int sm_send_registration(int index, bool send_obj_support_data,
 		goto cleanup;
 	}
 
-	zoap_add_option(&msg->zpkt, ZOAP_OPTION_URI_PATH,
-			LWM2M_RD_CLIENT_URI,
-			strlen(LWM2M_RD_CLIENT_URI));
+	/* TODO: handle return error */
+	coap_packet_append_option(&msg->cpkt, COAP_OPTION_URI_PATH,
+				  LWM2M_RD_CLIENT_URI,
+				  strlen(LWM2M_RD_CLIENT_URI));
 
 	if (!sm_is_registered(index)) {
 		/* include client endpoint in URI QUERY on 1st registration */
-		zoap_add_option_int(&msg->zpkt, ZOAP_OPTION_CONTENT_FORMAT,
-				    LWM2M_FORMAT_APP_LINK_FORMAT);
-		snprintf(query_buffer, sizeof(query_buffer) - 1,
+		coap_append_option_int(&msg->cpkt, COAP_OPTION_CONTENT_FORMAT,
+				       LWM2M_FORMAT_APP_LINK_FORMAT);
+		snprintk(query_buffer, sizeof(query_buffer) - 1,
 			 "lwm2m=%s", LWM2M_PROTOCOL_VERSION);
-		zoap_add_option(&msg->zpkt, ZOAP_OPTION_URI_QUERY,
-				query_buffer, strlen(query_buffer));
-		snprintf(query_buffer, sizeof(query_buffer) - 1,
+		/* TODO: handle return error */
+		coap_packet_append_option(&msg->cpkt, COAP_OPTION_URI_QUERY,
+					  query_buffer, strlen(query_buffer));
+		snprintk(query_buffer, sizeof(query_buffer) - 1,
 			 "ep=%s", clients[index].ep_name);
-		zoap_add_option(&msg->zpkt, ZOAP_OPTION_URI_QUERY,
-				query_buffer, strlen(query_buffer));
+		/* TODO: handle return error */
+		coap_packet_append_option(&msg->cpkt, COAP_OPTION_URI_QUERY,
+					  query_buffer, strlen(query_buffer));
 	} else {
 		/* include server endpoint in URI PATH otherwise */
-		zoap_add_option(&msg->zpkt, ZOAP_OPTION_URI_PATH,
-				clients[index].server_ep,
-				strlen(clients[index].server_ep));
+		/* TODO: handle return error */
+		coap_packet_append_option(&msg->cpkt, COAP_OPTION_URI_PATH,
+					  clients[index].server_ep,
+					  strlen(clients[index].server_ep));
 	}
 
-	snprintf(query_buffer, sizeof(query_buffer) - 1,
+	snprintk(query_buffer, sizeof(query_buffer) - 1,
 		 "lt=%d", clients[index].lifetime);
-	zoap_add_option(&msg->zpkt, ZOAP_OPTION_URI_QUERY,
-			query_buffer, strlen(query_buffer));
+	/* TODO: handle return error */
+	coap_packet_append_option(&msg->cpkt, COAP_OPTION_URI_QUERY,
+				  query_buffer, strlen(query_buffer));
+
 	/* TODO: add supported binding query string */
 
 	if (send_obj_support_data) {
-		/* generate the rd data */
-		client_data_len = lwm2m_get_rd_data(client_data,
-							   sizeof(client_data));
-		payload = zoap_packet_get_payload(&msg->zpkt, &len);
-		if (!payload) {
-			ret = -EINVAL;
+		ret = coap_packet_append_payload_marker(&msg->cpkt);
+		if (ret < 0) {
 			goto cleanup;
 		}
 
-		memcpy(payload, client_data, client_data_len);
-		ret = zoap_packet_set_used(&msg->zpkt, client_data_len);
-		if (ret) {
+		/* generate the rd data */
+		client_data_len = lwm2m_get_rd_data(client_data,
+						    sizeof(client_data));
+
+		if (!net_pkt_append_all(msg->cpkt.pkt, client_data_len,
+					client_data, BUF_ALLOC_TIMEOUT)) {
+			ret = -ENOMEM;
 			goto cleanup;
 		}
 	}
@@ -687,13 +716,23 @@ static int sm_send_registration(int index, bool send_obj_support_data,
 	}
 
 	/* log the registration attempt */
+#if defined(CONFIG_NET_APP_DTLS)
+	if (app_ctx->dtls.ctx) {
+		remote = &app_ctx->dtls.ctx->remote;
+	}
+#endif
+
+	if (!remote) {
+		remote = &app_ctx->default_ctx->remote;
+	}
+
 	SYS_LOG_DBG("registration sent [%s]",
-		    lwm2m_sprint_ip_addr(&app_ctx->default_ctx->remote));
+		    lwm2m_sprint_ip_addr(remote));
 
 	return 0;
 
 cleanup:
-	lwm2m_release_message(msg);
+	lwm2m_reset_message(msg, true);
 	return ret;
 }
 
@@ -755,8 +794,8 @@ static int sm_do_deregister(int index)
 		return -ENOMEM;
 	}
 
-	msg->type = ZOAP_TYPE_CON;
-	msg->code = ZOAP_METHOD_DELETE;
+	msg->type = COAP_TYPE_CON;
+	msg->code = COAP_METHOD_DELETE;
 	msg->mid = 0;
 	msg->reply_cb = do_deregister_reply_cb;
 	msg->message_timeout_cb = do_deregister_timeout_cb;
@@ -766,9 +805,10 @@ static int sm_do_deregister(int index)
 		goto cleanup;
 	}
 
-	zoap_add_option(&msg->zpkt, ZOAP_OPTION_URI_PATH,
-			clients[index].server_ep,
-			strlen(clients[index].server_ep));
+	/* TODO: handle return error */
+	coap_packet_append_option(&msg->cpkt, COAP_OPTION_URI_PATH,
+				  clients[index].server_ep,
+				  strlen(clients[index].server_ep));
 
 	SYS_LOG_INF("Deregister from '%s'", clients[index].server_ep);
 
@@ -783,7 +823,7 @@ static int sm_do_deregister(int index)
 	return 0;
 
 cleanup:
-	lwm2m_release_message(msg);
+	lwm2m_reset_message(msg, true);
 	return ret;
 }
 
@@ -791,70 +831,60 @@ static void lwm2m_rd_client_service(void)
 {
 	int index;
 
-	while (true) {
-		for (index = 0; index < client_count; index++) {
-			switch (get_sm_state(index)) {
+	for (index = 0; index < client_count; index++) {
+		switch (get_sm_state(index)) {
 
-			case ENGINE_INIT:
-				sm_do_init(index);
-				break;
+		case ENGINE_INIT:
+			sm_do_init(index);
+			break;
 
-			case ENGINE_DO_BOOTSTRAP:
-				sm_do_bootstrap(index);
-				break;
+		case ENGINE_DO_BOOTSTRAP:
+			sm_do_bootstrap(index);
+			break;
 
-			case ENGINE_BOOTSTRAP_SENT:
-				/* wait for bootstrap to be done or timeout */
-				break;
+		case ENGINE_BOOTSTRAP_SENT:
+			/* wait for bootstrap to be done or timeout */
+			break;
 
-			case ENGINE_BOOTSTRAP_DONE:
-				sm_bootstrap_done(index);
-				break;
+		case ENGINE_BOOTSTRAP_DONE:
+			sm_bootstrap_done(index);
+			break;
 
-			case ENGINE_DO_REGISTRATION:
-				sm_do_registration(index);
-				break;
+		case ENGINE_DO_REGISTRATION:
+			sm_do_registration(index);
+			break;
 
-			case ENGINE_REGISTRATION_SENT:
-				/* wait registration to be done or timeout */
-				break;
+		case ENGINE_REGISTRATION_SENT:
+			/* wait registration to be done or timeout */
+			break;
 
-			case ENGINE_REGISTRATION_DONE:
-				sm_registration_done(index);
-				break;
+		case ENGINE_REGISTRATION_DONE:
+			sm_registration_done(index);
+			break;
 
-			case ENGINE_UPDATE_SENT:
-				/* wait update to be done or abort */
-				break;
+		case ENGINE_UPDATE_SENT:
+			/* wait update to be done or abort */
+			break;
 
-			case ENGINE_DEREGISTER:
-				sm_do_deregister(index);
-				break;
+		case ENGINE_DEREGISTER:
+			sm_do_deregister(index);
+			break;
 
-			case ENGINE_DEREGISTER_SENT:
-				/* wait for deregister to be done or reset */
-				break;
+		case ENGINE_DEREGISTER_SENT:
+			/* wait for deregister to be done or reset */
+			break;
 
-			case ENGINE_DEREGISTER_FAILED:
-				break;
+		case ENGINE_DEREGISTER_FAILED:
+			break;
 
-			case ENGINE_DEREGISTERED:
-				break;
+		case ENGINE_DEREGISTERED:
+			break;
 
-			default:
-				SYS_LOG_ERR("Unhandled state: %d",
-					    get_sm_state(index));
+		default:
+			SYS_LOG_ERR("Unhandled state: %d",
+				    get_sm_state(index));
 
-			}
-
-			k_yield();
 		}
-
-		/*
-		 * TODO: calculate the diff between the start of the loop
-		 * and subtract that from the update interval
-		 */
-		k_sleep(K_MSEC(STATE_MACHINE_UPDATE_INTERVAL));
 	}
 }
 
@@ -899,13 +929,8 @@ cleanup:
 
 static int lwm2m_rd_client_init(struct device *dev)
 {
-	k_thread_create(&lwm2m_rd_client_thread_data,
-			&lwm2m_rd_client_thread_stack[0],
-			K_THREAD_STACK_SIZEOF(lwm2m_rd_client_thread_stack),
-			(k_thread_entry_t) lwm2m_rd_client_service,
-			NULL, NULL, NULL, K_PRIO_COOP(7), 0, K_NO_WAIT);
-	SYS_LOG_DBG("LWM2M RD client thread started");
-	return 0;
+	return lwm2m_engine_add_service(lwm2m_rd_client_service,
+					STATE_MACHINE_UPDATE_INTERVAL);
 }
 
 SYS_INIT(lwm2m_rd_client_init, APPLICATION,

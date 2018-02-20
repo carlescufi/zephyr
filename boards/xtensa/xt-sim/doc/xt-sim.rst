@@ -81,7 +81,7 @@ You can use the following code to create that file:
     then
     	export ARCH=xtensa
     	export BOARD=xt-sim
-    	export ZEPHYR_GCC_VARIANT=xcc
+        export ZEPHYR_TOOLCHAIN_VARIANT=xcc
     	export XTENSA_TOOLS_PATH=/opt/xtensa/XtDevTools/install/tools/RG-2016.4-linux/XtensaTools
     	export XTENSA_BUILDS_PATH=/opt/xtensa/XtDevTools/install/builds/RG-2016.4-linux
     	#export XTENSA_BUILD_DIR= #Keep empty to use default directory
@@ -90,13 +90,13 @@ You can use the following code to create that file:
     then
     	export ARCH=xtensa
     	export BOARD=qemu
-    	export ZEPHYR_GCC_VARIANT=zephyr
+    	export ZEPHYR_TOOLCHAIN_VARIANT=zephyr
     	export ZEPHYR_SDK_INSTALL_DIR=/opt/xtensa/zephyr-sdk-64-INTERNAL-11-22-2016
     elif test "${CROSS}" = zephyr-x86
     then
     	export ARCH=x86
     	export BOARD=qemu_x86
-    	export ZEPHYR_GCC_VARIANT=zephyr
+    	export ZEPHYR_TOOLCHAIN_VARIANT=zephyr
     	export ZEPHYR_SDK_INSTALL_DIR=/opt/xtensa/zephyr-sdk-64-INTERNAL-11-22-2016
     else
     	echo "Unsupported compiler '${CROSS}' defined by environment variable CROSS"
@@ -151,10 +151,9 @@ The linker script should be named ``linker.ld`` and placed in the directory
 Configuring build
 =================
 
-.. code-block:: console
-
-    $ cd tests/kernel/test_build
-    $ make menuconfig
+.. zephyr-app-commands::
+   :zephyr-app: tests/kernel/test_build
+   :goals: menuconfig
 
 Below is an example of usage for typical configuration:
 
@@ -183,11 +182,10 @@ Compiling and running
 The Xtensa executable can be run in the simulator either with a standalone core,
 or with a core connected to simulated peripherals.
 
-Use make to build and run as follows:
+Build and run as follows:
 
-.. code-block:: console
-
-    $ make run
+.. zephyr-app-commands::
+   :goals: run
 
 References
 **********

@@ -6,21 +6,25 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-/*
-DESCRIPTION
-Unit test for tickless idle feature.
- */
+/* DESCRIPTION Unit test for tickless idle feature. */
 
 #include <zephyr.h>
+#include <ztest.h>
 
 #include <misc/printk.h>
 #include <arch/cpu.h>
 #include <tc_util.h>
+#if defined(CONFIG_ARCH_POSIX)
+#include "posix_board_if.h"
+#endif
 
 #define STACKSIZE 4096
 #define PRIORITY 6
 
 #define SLEEP_TICKS 10
+
+static struct k_thread thread_tickless;
+static K_THREAD_STACK_DEFINE(thread_tickless_stack, STACKSIZE);
 
 #ifdef CONFIG_TICKLESS_IDLE
 extern s32_t _sys_idle_threshold_ticks;
@@ -38,13 +42,17 @@ extern s32_t _sys_idle_threshold_ticks;
  * timestamp routines.
  */
 
-#if defined(CONFIG_X86) || defined(CONFIG_ARC)
+#if defined(CONFIG_X86) || defined(CONFIG_ARC) || defined(CONFIG_ARCH_POSIX)
 typedef u64_t _timer_res_t;
 #define _TIMER_ZERO  0ULL
 
 /* timestamp routines */
 #define _TIMESTAMP_OPEN()
+#if defined(CONFIG_ARCH_POSIX)
+#define _TIMESTAMP_READ()	(posix_get_hw_cycle())
+#else
 #define _TIMESTAMP_READ()	(_tsc_read())
+#endif
 #define _TIMESTAMP_CLOSE()
 
 #elif defined(CONFIG_ARM)
@@ -123,6 +131,8 @@ void ticklessTestThread(void)
 #if defined(CONFIG_X86) || defined(CONFIG_ARC)
 	printk("Calibrated time stamp period = 0x%x%x\n",
 		   (u32_t)(cal_tsc >> 32), (u32_t)(cal_tsc & 0xFFFFFFFFLL));
+#elif defined(CONFIG_ARCH_POSIX)
+	printk("Calibrated time stamp period = %llu\n", cal_tsc);
 #elif defined(CONFIG_ARM)
 	printk("Calibrated time stamp period = 0x%x\n", cal_tsc);
 #endif
@@ -168,12 +178,18 @@ void ticklessTestThread(void)
 		   (u32_t)(diff_tsc >> 32), (u32_t)(diff_tsc & 0xFFFFFFFFULL));
 	printk("Cal   time stamp: 0x%x%x\n",
 		   (u32_t)(cal_tsc >> 32), (u32_t)(cal_tsc & 0xFFFFFFFFLL));
+#elif defined(CONFIG_ARCH_POSIX)
+	printk("diff  time stamp: %llu\n", diff_tsc);
+	printk("Cal   time stamp: %llu\n", cal_tsc);
 #elif defined(CONFIG_ARM) || defined(CONFIG_SOC_QUARK_SE_C1000_SS)
 	printk("diff  time stamp: 0x%x\n", diff_tsc);
 	printk("Cal   time stamp: 0x%x\n", cal_tsc);
 #endif
 
-	/* Calculate percentage difference between calibrated TSC diff and measured result */
+	/*
+	 * Calculate percentage difference between
+	 * calibrated TSC diff and measured result
+	 */
 	if (diff_tsc > cal_tsc) {
 		diff_per = (100 * (diff_tsc - cal_tsc)) / cal_tsc;
 	} else {
@@ -182,21 +198,27 @@ void ticklessTestThread(void)
 
 	printk("variance in time stamp diff: %d percent\n", (s32_t)diff_per);
 
-	if (diff_ticks != SLEEP_TICKS) {
-		printk("* TEST FAILED. TICK COUNT INCORRECT *\n");
-		TC_END_REPORT(TC_FAIL);
-	} else {
-		TC_END_REPORT(TC_PASS);
-	}
+	zassert_equal(diff_ticks, SLEEP_TICKS,
+			"* TEST FAILED. TICK COUNT INCORRECT *");
 
 	/* release the timer, if necessary */
 	_TIMESTAMP_CLOSE();
 
-	while (1) {
-		;
-	}
-
 }
 
-K_THREAD_DEFINE(TICKLESS_THREAD, STACKSIZE, ticklessTestThread, NULL, NULL,
-		NULL, PRIORITY, 0, K_NO_WAIT);
+void test_tickless(void)
+{
+	k_thread_create(&thread_tickless, thread_tickless_stack,
+			STACKSIZE,
+			(k_thread_entry_t) ticklessTestThread,
+			NULL, NULL, NULL,
+			PRIORITY, 0, K_NO_WAIT);
+	k_sleep(4000);
+}
+
+void test_main(void)
+{
+	ztest_test_suite(test_tick_less,
+			ztest_unit_test(test_tickless));
+	ztest_run_test_suite(test_tick_less);
+}

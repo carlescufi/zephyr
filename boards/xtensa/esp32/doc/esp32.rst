@@ -6,16 +6,13 @@ ESP32
 Overview
 ********
 
-From Wikipedia:
 
-::
-
-   ESP32 is a series of low cost, low power system on a chip microcontrollers
-   with integrated Wi-Fi & dual-mode Bluetooth.  The ESP32 series employs a
-   Tensilica Xtensa LX6 microprocessor in both dual-core and single-core
-   variations.  ESP32 is created and developed by Espressif Systems, a
-   Shanghai-based Chinese company, and is manufactured by TSMC using their 40nm
-   process. [1]_
+ESP32 is a series of low cost, low power system on a chip microcontrollers
+with integrated Wi-Fi & dual-mode Bluetooth.  The ESP32 series employs a
+Tensilica Xtensa LX6 microprocessor in both dual-core and single-core
+variations.  ESP32 is created and developed by Espressif Systems, a
+Shanghai-based Chinese company, and is manufactured by TSMC using their 40nm
+process. [1]_
 
 The features include the following:
 
@@ -67,13 +64,13 @@ Set up build environment
 
 With both the toolchain and SDK installed, the Zephyr build system must be
 instructed to use this particular variant by setting the
-``ZEPHYR_GCC_VARIANT`` shell variable.  Two other environment variables
+``ZEPHYR_TOOLCHAIN_VARIANT`` shell variable.  Two other environment variables
 should also be set, pointing to, respectively, the path where ESP-IDF can be
 located, and where the toolchain has been installed:
 
 .. code-block:: console
 
-   export ZEPHYR_GCC_VARIANT="espressif"
+   export ZEPHYR_TOOLCHAIN_VARIANT="espressif"
    export ESP_IDF_PATH="/path/to/esp-idf"
    export ESPRESSIF_TOOLCHAIN_PATH="/path/to/xtensa-esp32-elf/"
 
@@ -92,9 +89,21 @@ of ESP-IDF:
 Flashing
 ========
 
-Issuing ``make BOARD=esp32 flash`` should work as usual.  Environment
-variables can be set to set the serial port device, baud rate, and
-other options.  Please refer to the following table for details.
+The usual ``flash`` target will work with the ``esp32`` board
+configuration. Here is an example for the :ref:`hello_world`
+application.
+
+.. zephyr-app-commands::
+   :zephyr-app: samples/hello_world
+   :board: esp32
+   :goals: flash
+
+Refer to :ref:`build_an_application` and :ref:`application_run` for
+more details.
+
+Environment variables can be set to set the serial port device, baud
+rate, and other options.  Please refer to the following table for
+details.
 
 +----------------+---------------+
 | Variable       | Default value |

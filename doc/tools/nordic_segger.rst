@@ -154,6 +154,15 @@ To use RTT, you will first need to enable it by adding the following lines in yo
    CONFIG_HAS_SEGGER_RTT=y
    CONFIG_RTT_CONSOLE=y
 
+If you get no RTT output you might need to disable other consoles which conflict
+with the RTT one if they are enabled by default in the particular sample or
+application you are running. For example, to disable the UART console,
+add this to your ``.conf`` file:
+
+.. code-block:: console
+
+   CONFIG_UART_CONSOLE=n
+
 Once compiled and flashed with RTT enabled, you will be able to display RTT console
 messages by doing the following:
 
@@ -181,6 +190,11 @@ GNU/Linux and macOS (OS X)
   * RTT Channel name or index: 0
   * Output file: filename or ``/dev/stdout`` to display on the terminal directly
 
+Python viewer
+=============
+
+A Python RTT viewer tool can be found in the `pyrtt-viewer`_ GitHub repository.
+
 Segger Ozone
 ************
 
@@ -196,7 +210,7 @@ Once downloaded you can install it and configure it like so:
 * Host Interface: USB
 
 Once configured, you can then use the File->Open menu to open the ``zephyr.elf``
-file that you can find in your ``outdir/<board>/`` folder.
+file that you can find in your build folder.
 
 References
 **********
@@ -210,6 +224,7 @@ References
 
 .. _Segger SAM3U Wiki: https://wiki.segger.com/index.php?title=J-Link-OB_SAM3U
 .. _Real-Time Tracing (RTT): https://www.segger.com/jlink-rtt.html
+.. _pyrtt-viewer: https://github.com/thomasstenersen/pyrtt-viewer
 .. _Segger Ozone: https://www.segger.com/ozone.html
 .. _Segger Ozone Download: https://www.segger.com/downloads/jlink#Ozone
 

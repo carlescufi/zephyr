@@ -16,8 +16,10 @@
 
 #include <kernel.h>
 #include <kernel_structs.h>
+#include <kernel_internal.h>
 #include <wait_q.h>
 #include <ksched.h>
+#include <kswap.h>
 #include <misc/slist.h>
 #include <misc/dlist.h>
 #include <misc/__assert.h>
@@ -227,9 +229,7 @@ int k_poll(struct k_poll_event *events, int num_events, s32_t timeout)
 	/*
 	 * If we're not polling anymore, it means that at least one event
 	 * condition is met, either when looping through the events here or
-	 * because one of the events registered has had its state changed, or
-	 * that one of the objects we wanted to poll on already had a thread
-	 * polling on it.
+	 * because one of the events registered has had its state changed.
 	 */
 	if (!is_polling()) {
 		clear_event_registrations(events, last_registered, key);
@@ -292,7 +292,8 @@ static int _signal_poll_event(struct k_poll_event *event, u32_t state,
 
 	_unpend_thread(thread);
 	_abort_thread_timeout(thread);
-	_set_thread_return_value(thread, 0);
+	_set_thread_return_value(thread,
+				 state == K_POLL_STATE_NOT_READY ? -EINTR : 0);
 
 	if (!_is_thread_ready(thread)) {
 		goto ready_event;

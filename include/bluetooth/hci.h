@@ -23,6 +23,10 @@ extern "C" {
 #define BT_ADDR_LE_PUBLIC_ID    0x02
 #define BT_ADDR_LE_RANDOM_ID    0x03
 
+/* Special own address types for LL privacy (used in adv & scan parameters) */
+#define BT_HCI_OWN_ADDR_RPA_OR_PUBLIC  0x02
+#define BT_HCI_OWN_ADDR_RPA_OR_RANDOM  0x03
+
 typedef struct {
 	u8_t  val[6];
 } bt_addr_t;
@@ -124,6 +128,7 @@ static inline bool bt_addr_le_is_identity(const bt_addr_le_t *addr)
 #define BT_DATA_SOLICIT32               0x1f /* Solicit UUIDs, 32-bit */
 #define BT_DATA_SVC_DATA32              0x20 /* Service data, 32-bit UUID */
 #define BT_DATA_SVC_DATA128             0x21 /* Service data, 128-bit UUID */
+#define BT_DATA_URI                     0x24 /* URI */
 #define BT_DATA_MESH_PROV               0x29 /* Mesh Provisioning PDU */
 #define BT_DATA_MESH_MESSAGE            0x2a /* Mesh Networking PDU */
 #define BT_DATA_MESH_BEACON             0x2b /* Mesh Beacon */
@@ -215,6 +220,8 @@ struct bt_hci_cmd_hdr {
 						BT_LE_FEAT_BIT_PHY_2M)
 #define BT_FEAT_LE_PHY_CODED(feat)              BT_LE_FEAT_TEST(feat, \
 						BT_LE_FEAT_BIT_PHY_CODED)
+#define BT_FEAT_LE_PRIVACY(feat)                BT_LE_FEAT_TEST(feat, \
+						BT_LE_FEAT_BIT_PRIVACY)
 
 /* LE States */
 #define BT_LE_STATES_SLAVE_CONN_ADV(states)     (states & 0x0000004000000000)

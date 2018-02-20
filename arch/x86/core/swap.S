@@ -127,7 +127,7 @@ SECTION_FUNC(TEXT, __swap)
 	pushl	%ebp
 
 	/*
-	 * Carve space for the return value. Setting it to a defafult of
+	 * Carve space for the return value. Setting it to a default of
 	 * -EAGAIN eliminates the need for the timeout code to set it.
 	 * If another value is ever needed, it can be modified with
 	 * _set_thread_return_value().
@@ -143,7 +143,9 @@ SECTION_FUNC(TEXT, __swap)
 
 #ifdef CONFIG_KERNEL_EVENT_LOGGER_CONTEXT_SWITCH
 	/* Register the context switch */
+	push %edx
 	call	_sys_k_event_logger_context_switch
+	pop %edx
 #endif
 	movl	_kernel_offset_to_ready_q_cache(%edi), %eax
 
@@ -329,7 +331,7 @@ CROHandlingDone:
 
 	movl    %eax, _kernel_offset_to_current(%edi)
 
-	/* recover task/fiber stack pointer from k_thread */
+	/* recover thread stack pointer from k_thread */
 
 	movl	_thread_offset_to_esp(%eax), %esp
 
@@ -391,8 +393,7 @@ time_read_not_needed:
 #endif
 	ret
 
-#if defined(CONFIG_GDB_INFO) || defined(CONFIG_DEBUG_INFO) \
-	|| defined(CONFIG_X86_IAMCU)
+#if defined(CONFIG_X86_IAMCU)
 /**
  *
  * @brief Adjust stack/parameters before invoking thread entry function
@@ -404,7 +405,7 @@ time_read_not_needed:
  * jumps to _thread_entry().
  *
  * GDB normally stops unwinding a stack when it detects that it has
- * reached a function called main().  Kernel tasks, however, do not have
+ * reached a function called main().  Kernel threads, however, do not have
  * a main() function, and there does not appear to be a simple way of stopping
  * the unwinding of the stack.
  *
@@ -463,8 +464,6 @@ SECTION_FUNC(TEXT, _x86_thread_entry_wrapper)
 	pop	%edx
 	pop	%ecx
 	push	$0	 /* Null return address */
-#elif defined(CONFIG_GDB_INFO) || defined(CONFIG_DEBUG_INFO)
-	mov	$0, (%esp) /* zero initialEFLAGS location */
 #endif
 	jmp	*%edi
 #endif

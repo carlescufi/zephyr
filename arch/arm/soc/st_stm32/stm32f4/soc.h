@@ -26,7 +26,7 @@
 
 #include <device.h>
 #include <misc/util.h>
-#include <drivers/rand32.h>
+#include <random/rand32.h>
 
 #include <stm32f4xx.h>
 
@@ -40,17 +40,20 @@
 #include <stm32f4xx_ll_spi.h>
 #endif /* CONFIG_CLOCK_CONTROL_STM32_CUBE */
 
+#ifdef CONFIG_SERIAL_HAS_DRIVER
+#include <stm32f4xx_ll_usart.h>
+#endif
+
 #ifdef CONFIG_I2C
 #include <stm32f4xx_ll_i2c.h>
 #endif
 
-#ifdef CONFIG_RANDOM_STM32_RNG
+#ifdef CONFIG_ENTROPY_STM32_RNG
 #include <stm32f4xx_ll_rng.h>
 #endif
 
-/* For IMG_MANAGER */
-#if defined(CONFIG_SOC_FLASH_STM32)
-#define FLASH_DRIVER_NAME	CONFIG_SOC_FLASH_STM32_DEV_NAME
+#ifdef CONFIG_IWDG_STM32
+#include <stm32f4xx_ll_iwdg.h>
 #endif
 
 #endif /* !_ASMLANGUAGE */

@@ -74,6 +74,8 @@ static inline const char *addrtype2str(enum net_addr_type addr_type)
 		return "DHCP";
 	case NET_ADDR_MANUAL:
 		return "manual";
+	case NET_ADDR_OVERRIDABLE:
+		return "overridable";
 	}
 
 	return "<invalid type>";
@@ -667,8 +669,8 @@ static void tcp_cb(struct net_tcp *tcp, void *user_data)
 	int *count = user_data;
 	u16_t recv_mss = net_tcp_get_recv_mss(tcp);
 
-	printk("%p    %5u     %5u %10u %10u %5u   %s\n",
-	       tcp,
+	printk("%p %p   %5u    %5u %10u %10u %5u   %s\n",
+	       tcp, tcp->context,
 	       ntohs(net_sin6_ptr(&tcp->context->local)->sin6_port),
 	       ntohs(net_sin6(&tcp->context->remote)->sin6_port),
 	       tcp->send_seq, tcp->send_ack, recv_mss,
@@ -1009,15 +1011,27 @@ static void net_app_cb(struct net_app_ctx *ctx, void *user_data)
 
 #if defined(CONFIG_NET_APP_SERVER)
 #if defined(CONFIG_NET_TCP)
-	if (ctx->server.net_ctx) {
-		get_addresses(ctx->server.net_ctx,
-			      addr_local, sizeof(addr_local),
-			      addr_remote, sizeof(addr_remote));
+	{
+		int i, found = 0;
 
-		printk("     Active: %16s <- %16s\n",
-		       addr_local, addr_remote);
-	} else {
-		printk("     No active connections to this server.\n");
+		for (i = 0; i < CONFIG_NET_APP_SERVER_NUM_CONN; i++) {
+			if (!ctx->server.net_ctxs[i] ||
+			    !net_context_is_used(ctx->server.net_ctxs[i])) {
+				continue;
+			}
+
+			get_addresses(ctx->server.net_ctxs[i],
+				      addr_local, sizeof(addr_local),
+				      addr_remote, sizeof(addr_remote));
+
+			printk("     Active: %16s <- %16s\n",
+			       addr_local, addr_remote);
+			found++;
+		}
+
+		if (!found) {
+			printk("     No active connections to this server.\n");
+		}
 	}
 #else
 	printk("     TCP not enabled for this server.\n");
@@ -1149,7 +1163,7 @@ int net_shell_cmd_conn(int argc, char *argv[])
 #endif
 
 #if defined(CONFIG_NET_TCP)
-	printk("\nTCP        Src port  Dst port   Send-Seq   Send-Ack  MSS"
+	printk("\nTCP        Context   Src port Dst port   Send-Seq   Send-Ack  MSS"
 	       "%s\n", IS_ENABLED(CONFIG_NET_DEBUG_TCP) ? "    State" : "");
 
 	count = 0;
@@ -1368,7 +1382,6 @@ int net_shell_cmd_dns(int argc, char *argv[])
 
 #if defined(CONFIG_NET_DEBUG_HTTP_CONN) && defined(CONFIG_HTTP_SERVER)
 #define MAX_HTTP_OUTPUT_LEN 64
-
 static char *http_str_output(char *output, int outlen, const char *str, int len)
 {
 	if (len > outlen) {
@@ -1385,18 +1398,15 @@ static char *http_str_output(char *output, int outlen, const char *str, int len)
 	return output;
 }
 
-static void http_server_cb(struct http_server_ctx *entry,
-			   void *user_data)
+static void http_server_cb(struct http_ctx *entry, void *user_data)
 {
 	int *count = user_data;
 	static char output[MAX_HTTP_OUTPUT_LEN];
+	int i;
 
 	/* +7 for []:port */
 	char addr_local[ADDR_LEN + 7];
 	char addr_remote[ADDR_LEN + 7] = "";
-
-	get_addresses(entry->req.net_ctx, addr_local, sizeof(addr_local),
-		      addr_remote, sizeof(addr_remote));
 
 	if (*count == 0) {
 		printk("        HTTP ctx    Local           \t"
@@ -1405,12 +1415,24 @@ static void http_server_cb(struct http_server_ctx *entry,
 
 	(*count)++;
 
-	printk("[%2d] %c%c %p  %16s\t%16s\t%s\n",
-	       *count, entry->enabled ? 'E' : 'D',
-	       entry->is_https ? 'S' : ' ',
-	       entry, addr_local, addr_remote,
-	       http_str_output(output, sizeof(output) - 1,
-			       entry->req.url, entry->req.url_len));
+	for (i = 0; i < CONFIG_NET_APP_SERVER_NUM_CONN; i++) {
+		if (!entry->app_ctx.server.net_ctxs[i] ||
+		    !net_context_is_used(entry->app_ctx.server.net_ctxs[i])) {
+			continue;
+		}
+
+		get_addresses(entry->app_ctx.server.net_ctxs[i],
+			      addr_local, sizeof(addr_local),
+			      addr_remote, sizeof(addr_remote));
+
+		printk("[%2d] %c%c %p  %16s\t%16s\t%s\n",
+		       *count,
+		       entry->app_ctx.is_enabled ? 'E' : 'D',
+		       entry->is_tls ? 'S' : ' ',
+		       entry, addr_local, addr_remote,
+		       http_str_output(output, sizeof(output) - 1,
+				       entry->http.url, entry->http.url_len));
+	}
 }
 #endif /* CONFIG_NET_DEBUG_HTTP_CONN && CONFIG_HTTP_SERVER */
 
@@ -1731,6 +1753,7 @@ static enum net_verdict _handle_ipv6_echo_reply(struct net_pkt *pkt)
 	k_sem_give(&ping_timeout);
 	_remove_ipv6_ping_handler();
 
+	net_pkt_unref(pkt);
 	return NET_OK;
 }
 
@@ -1808,6 +1831,7 @@ static enum net_verdict _handle_ipv4_echo_reply(struct net_pkt *pkt)
 	k_sem_give(&ping_timeout);
 	_remove_ipv4_ping_handler();
 
+	net_pkt_unref(pkt);
 	return NET_OK;
 }
 
@@ -1851,6 +1875,11 @@ int net_shell_cmd_ping(int argc, char *argv[])
 		host = argv[1];
 	} else {
 		host = argv[2];
+	}
+
+	if (!host) {
+		printk("Target host missing\n");
+		return 0;
 	}
 
 	ret = _ping_ipv6(host);
@@ -2097,6 +2126,8 @@ int net_shell_cmd_rpl(int argc, char *argv[])
 #if defined(CONFIG_INIT_STACKS)
 extern K_THREAD_STACK_DEFINE(_main_stack, CONFIG_MAIN_STACK_SIZE);
 extern K_THREAD_STACK_DEFINE(_interrupt_stack, CONFIG_ISR_STACK_SIZE);
+extern K_THREAD_STACK_DEFINE(sys_work_q_stack,
+			     CONFIG_SYSTEM_WORKQUEUE_STACK_SIZE);
 #endif
 
 int net_shell_cmd_stacks(int argc, char *argv[])
@@ -2143,6 +2174,19 @@ int net_shell_cmd_stacks(int argc, char *argv[])
 	       "ISR", "_interrupt_stack", CONFIG_ISR_STACK_SIZE,
 	       CONFIG_ISR_STACK_SIZE, unused,
 	       CONFIG_ISR_STACK_SIZE - unused, CONFIG_ISR_STACK_SIZE, pcnt);
+
+	net_analyze_stack_get_values(K_THREAD_STACK_BUFFER(sys_work_q_stack),
+				     K_THREAD_STACK_SIZEOF(sys_work_q_stack),
+				     &pcnt, &unused);
+	printk("%s [%s] stack size %d/%d bytes unused %u usage"
+	       " %d/%d (%u %%)\n",
+	       "WORKQ", "system workqueue",
+	       CONFIG_SYSTEM_WORKQUEUE_STACK_SIZE,
+	       CONFIG_SYSTEM_WORKQUEUE_STACK_SIZE, unused,
+	       CONFIG_SYSTEM_WORKQUEUE_STACK_SIZE - unused,
+	       CONFIG_SYSTEM_WORKQUEUE_STACK_SIZE, pcnt);
+#else
+	printk("Enable CONFIG_INIT_STACKS to see usage information.\n");
 #endif
 
 	return 0;
@@ -2469,7 +2513,7 @@ static struct shell_cmd net_commands[] = {
 		"arp flush\n\tRemove all entries from ARP cache" },
 	{ "conn", net_shell_cmd_conn,
 		"\n\tPrint information about network connections" },
-	{ "dns", net_shell_cmd_dns, "\n\tShow how DNS is configure\n"
+	{ "dns", net_shell_cmd_dns, "\n\tShow how DNS is configured\n"
 		"dns cancel\n\tCancel all pending requests\n"
 		"dns <hostname> [A or AAAA]\n\tQuery IPv4 address (default) or "
 		"IPv6 address for a  host name" },

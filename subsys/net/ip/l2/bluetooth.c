@@ -365,10 +365,12 @@ static bool eir_found(u8_t type, const u8_t *data, u8_t data_len,
 	}
 
 	for (i = 0; i < data_len; i += sizeof(u16_t)) {
+		struct bt_uuid *uuid;
 		u16_t u16;
 
 		memcpy(&u16, &data[i], sizeof(u16));
-		if (sys_le16_to_cpu(u16) != BT_UUID_IPSS_VAL) {
+		uuid = BT_UUID_DECLARE_16(sys_le16_to_cpu(u16));
+		if (bt_uuid_cmp(uuid, BT_UUID_IPSS)) {
 			continue;
 		}
 
@@ -401,7 +403,7 @@ static bool ad_parse(struct net_buf_simple *ad,
 			return false;
 		}
 
-		if (len > ad->len || ad->len < 1) {
+		if (len > ad->len) {
 			NET_ERR("AD malformed\n");
 			return false;
 		}

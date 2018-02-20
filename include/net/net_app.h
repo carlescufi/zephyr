@@ -51,6 +51,7 @@ extern "C" {
 /**
  * @brief Network application library
  * @defgroup net_app Network Application Library
+ * @ingroup networking
  * @{
  */
 
@@ -307,11 +308,11 @@ struct net_app_ctx {
 #if defined(CONFIG_NET_APP_SERVER)
 	struct {
 #if defined(CONFIG_NET_TCP)
-		/** Currently active network context. This will contain the
-		 * new context that is created after connection is accepted
+		/** Currently active network contexts. This will contain the
+		 * new contexts that are created after connection is accepted
 		 * when TCP is enabled.
 		 */
-		struct net_context *net_ctx;
+		struct net_context *net_ctxs[CONFIG_NET_APP_SERVER_NUM_CONN];
 #endif
 	} server;
 #endif /* CONFIG_NET_APP_SERVER */
@@ -387,7 +388,21 @@ struct net_app_ctx {
 		} mbedtls;
 
 		/** Have we called connect cb yet? */
-		bool connect_cb_called;
+		u8_t connect_cb_called : 1;
+
+		/** User wants to close the connection */
+		u8_t close_requested : 1;
+
+		/** Is there TX pending? If there is then the close operation
+		 * will be postponed after we have sent the data.
+		 */
+		u8_t tx_pending : 1;
+
+		/** Is the TLS/DTLS handshake fully done */
+		u8_t handshake_done : 1;
+
+		/** Is the connection closing */
+		u8_t connection_closing : 1;
 	} tls;
 #endif /* CONFIG_NET_APP_TLS || CONFIG_NET_APP_DTLS */
 
@@ -841,6 +856,19 @@ struct net_pkt *net_app_get_net_pkt(struct net_app_ctx *ctx,
 				    s32_t timeout);
 
 /**
+ * @brief Create network packet based on dst address.
+ *
+ * @param ctx Network application context.
+ * @param dst Destination address to select net_context
+ * @param timeout How long to wait the send before giving up.
+ *
+ * @return valid net_pkt if ok, NULL if error.
+ */
+struct net_pkt *net_app_get_net_pkt_with_dst(struct net_app_ctx *ctx,
+					     const struct sockaddr *dst,
+					     s32_t timeout);
+
+/**
  * @brief Create network buffer that will hold network data.
  *
  * @details The returned net_buf is automatically appended to the
@@ -864,6 +892,17 @@ struct net_buf *net_app_get_net_buf(struct net_app_ctx *ctx,
  * @return 0 if ok, <0 if error.
  */
 int net_app_close(struct net_app_ctx *ctx);
+
+/**
+ * @brief Close a specific network connection.
+ *
+ * @param ctx Network application context.
+ * @param net_ctx Network context.
+ *
+ * @return 0 if ok, <0 if error.
+ */
+int net_app_close2(struct net_app_ctx *ctx,
+		   struct net_context *net_ctx);
 
 /**
  * @brief Release this network application context.

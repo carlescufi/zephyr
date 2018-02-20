@@ -11,6 +11,7 @@ menuconfig ETH_STM32_HAL
 	prompt "STM32 HAL Ethernet driver"
 	depends on NET_L2_ETHERNET
 	default n
+	select USE_STM32_HAL_ETH
 	help
 	  Enable STM32 HAL based Ethernet driver.
 
@@ -50,7 +51,7 @@ config ETH_STM32_HAL_PHY_ADDRESS
 
 config ETH_STM32_HAL_RANDOM_MAC
 	bool "Random MAC address"
-	depends on ETH_STM32_HAL && RANDOM_GENERATOR
+	depends on ETH_STM32_HAL && ENTROPY_GENERATOR
 	default y
 	help
 	  Generate a random MAC address dynamically.

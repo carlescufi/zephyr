@@ -50,8 +50,14 @@ void _SysFatalErrorHandler(unsigned int reason, const NANO_ESF *pEsf)
 
 #if defined(CONFIG_ARM)
 #define NO_EXECUTE_SUPPORT 1
+#elif defined(CONFIG_ARC)
+#define NO_EXECUTE_SUPPORT 1
 #elif defined(CONFIG_X86)
-/* i386 MMU doesn't control execute capabilities, only on x86_64 */
+#if defined(CONFIG_X86_PAE_MODE)
+#define NO_EXECUTE_SUPPORT 1
+#else
+/* 32-bit paging mode in x86 doesn't support execute disable capability.*/
+#endif	/* x86 */
 #else
 #error "Architecture not supported"
 #endif
@@ -167,7 +173,7 @@ static void exec_heap(void)
 #endif
 #endif /* NO_EXECUTE_SUPPORT */
 
-void test_main(void *unused1, void *unused2, void *unused3)
+void test_main(void)
 {
 	ztest_test_suite(test_protection,
 #ifdef NO_EXECUTE_SUPPORT

@@ -21,6 +21,7 @@
 
 #include <toolchain.h>
 #include <linker/sections.h>
+#include <misc/util.h>
 
 /* include platform dependent linker-defs */
 #ifdef CONFIG_X86
@@ -34,6 +35,8 @@
 #elif defined(CONFIG_RISCV32)
 /* Nothing yet to include */
 #elif defined(CONFIG_XTENSA)
+/* Nothing yet to include */
+#elif defined(CONFIG_ARCH_POSIX)
 /* Nothing yet to include */
 #else
 #error Arch not supported.
@@ -96,15 +99,33 @@
  * their shell commands are automatically initialized by the kernel.
  */
 
-#define	SHELL_INIT_SECTIONS()		\
-		__shell_cmd_start = .;		\
-		KEEP(*(".shell_*"));		\
-		__shell_cmd_end = .;
+#define	SHELL_INIT_SECTIONS()				\
+		__shell_module_start = .;		\
+		KEEP(*(".shell_module_*"));		\
+		__shell_module_end = .;			\
+		__shell_cmd_start = .;			\
+		KEEP(*(".shell_cmd_*"));		\
+		__shell_cmd_end = .;			\
 
 #ifdef CONFIG_APPLICATION_MEMORY
-#define KERNEL_INPUT_SECTION(sect)	libzephyr.a (sect) kernel/lib.a (sect)
+
+#ifndef NUM_KERNEL_OBJECT_FILES
+#error "Expected NUM_KERNEL_OBJECT_FILES to be defined"
+#elif NUM_KERNEL_OBJECT_FILES > 19
+#error "Max supported kernel objects is 19."
+/* TODO: Using the preprocessor to do this was a mistake. Rewrite to
+   scale better. e.g. by aggregating the kernel objects into two
+   archives like KBuild did.*/
+#endif
+
+#define X(i, j) KERNEL_OBJECT_FILE_##i (j)
+#define Y(i, j) KERNEL_OBJECT_FILE_##i
+
+#define KERNEL_INPUT_SECTION(sect) \
+    UTIL_LISTIFY(NUM_KERNEL_OBJECT_FILES, X, sect)
 #define APP_INPUT_SECTION(sect)	\
-	*(EXCLUDE_FILE (*libzephyr.a *kernel/lib.a) sect)
+    *(EXCLUDE_FILE (UTIL_LISTIFY(NUM_KERNEL_OBJECT_FILES, Y, ~)) sect)
+
 #else
 #define KERNEL_INPUT_SECTION(sect)	*(sect)
 #define APP_INPUT_SECTION(sect)		*(sect)
@@ -213,6 +234,19 @@ extern char _vector_end[];
 
 /* end address of image, used by newlib for the heap */
 extern char _end[];
+
+#ifdef CONFIG_CCM_BASE_ADDRESS
+extern char __ccm_data_rom_start[];
+extern char __ccm_start[];
+extern char __ccm_data_start[];
+extern char __ccm_data_end[];
+extern char __ccm_bss_start[];
+extern char __ccm_bss_end[];
+extern char __ccm_noinit_start[];
+extern char __ccm_noinit_end[];
+extern char __ccm_end[];
+#endif /* CONFIG_CCM_BASE_ADDRESS */
+
 
 #endif /* ! _ASMLANGUAGE */
 

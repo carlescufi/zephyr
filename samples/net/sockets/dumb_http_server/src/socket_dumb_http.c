@@ -23,8 +23,14 @@
 
 #endif
 
+#define PORT 8080
+
+#ifndef USE_BIG_PAYLOAD
+#define USE_BIG_PAYLOAD 1
+#endif
+
 static const char content[] = {
-#if 0
+#if USE_BIG_PAYLOAD
     #include "response_big.html.bin.inc"
 #else
     #include "response_small.html.bin.inc"
@@ -41,10 +47,12 @@ int main(void)
 
 	bind_addr.sin_family = AF_INET;
 	bind_addr.sin_addr.s_addr = htonl(INADDR_ANY);
-	bind_addr.sin_port = htons(8080);
+	bind_addr.sin_port = htons(PORT);
 	bind(serv, (struct sockaddr *)&bind_addr, sizeof(bind_addr));
 
 	listen(serv, 5);
+
+	printf("Single-threaded dumb HTTP server waits for a connection on port %d...\n", PORT);
 
 	while (1) {
 		struct sockaddr_in client_addr;

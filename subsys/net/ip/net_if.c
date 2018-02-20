@@ -26,8 +26,14 @@
 #include "net_stats.h"
 
 #define REACHABLE_TIME (30 * MSEC_PER_SEC) /* in ms */
-#define MIN_RANDOM_FACTOR (1/2)
-#define MAX_RANDOM_FACTOR (3/2)
+/*
+ * split the min/max random reachable factors into numerator/denominator
+ * so that integer-based math works better
+ */
+#define MIN_RANDOM_NUMER (1)
+#define MIN_RANDOM_DENOM (2)
+#define MAX_RANDOM_NUMER (3)
+#define MAX_RANDOM_DENOM (2)
 
 /* net_if dedicated section limiters */
 extern struct net_if __net_if_start[];
@@ -278,6 +284,15 @@ enum net_verdict net_if_send_data(struct net_if *iface, struct net_pkt *pkt)
 		net_pkt_ll_src(pkt)->len = net_pkt_ll_if(pkt)->len;
 	}
 
+#if defined(CONFIG_NET_LOOPBACK)
+	/* If the packet is destined back to us, then there is no need to do
+	 * additional checks, so let the packet through.
+	 */
+	if (iface->l2 == &NET_L2_GET_NAME(DUMMY)) {
+		goto send;
+	}
+#endif
+
 #if defined(CONFIG_NET_IPV6)
 	/* If the ll dst address is not set check if it is present in the nbr
 	 * cache.
@@ -291,6 +306,9 @@ enum net_verdict net_if_send_data(struct net_if *iface, struct net_pkt *pkt)
 	}
 #endif
 
+#if defined(CONFIG_NET_LOOPBACK)
+send:
+#endif
 	verdict = iface->l2->send(iface, pkt);
 
 done:
@@ -349,11 +367,29 @@ struct net_if *net_if_lookup_by_dev(struct device *dev)
 
 struct net_if *net_if_get_default(void)
 {
+	struct net_if *iface = NULL;
+
 	if (__net_if_start == __net_if_end) {
 		return NULL;
 	}
 
-	return __net_if_start;
+#if defined(CONFIG_NET_DEFAULT_IF_ETHERNET)
+	iface = net_if_get_first_by_type(&NET_L2_GET_NAME(ETHERNET));
+#endif
+#if defined(CONFIG_NET_DEFAULT_IF_IEEE802154)
+	iface = net_if_get_first_by_type(&NET_L2_GET_NAME(IEEE802154));
+#endif
+#if defined(CONFIG_NET_DEFAULT_IF_BLUETOOTH)
+	iface = net_if_get_first_by_type(&NET_L2_GET_NAME(BLUETOOTH));
+#endif
+#if defined(CONFIG_NET_DEFAULT_IF_DUMMY)
+	iface = net_if_get_first_by_type(&NET_L2_GET_NAME(DUMMY));
+#endif
+#if defined(CONFIG_NET_DEFAULT_IF_OFFLOAD)
+	iface = net_if_get_first_by_type(&NET_L2_GET_NAME(OFFLOAD_IP));
+#endif
+
+	return iface ? iface : __net_if_start;
 }
 
 struct net_if *net_if_get_first_by_type(const struct net_l2 *l2)
@@ -449,17 +485,6 @@ static void dad_timeout(struct k_work *work)
 		 * in this case as the address is our own one.
 		 */
 		net_ipv6_nbr_rm(iface, &ifaddr->address.in6_addr);
-
-		/* We join the allnodes group from here so that we have
-		 * a link local address defined. If done from ifup(),
-		 * we would only get unspecified address as a source
-		 * address. The allnodes multicast group is only joined
-		 * once in this case as the net_ipv6_mcast_join() checks
-		 * if we have already joined.
-		 */
-		join_mcast_allnodes(iface);
-
-		join_mcast_solicit_node(iface, &ifaddr->address.in6_addr);
 	}
 }
 
@@ -670,6 +695,27 @@ static inline void net_if_addr_init(struct net_if_addr *ifaddr,
 	}
 }
 
+static inline struct in6_addr *check_global_addr(struct net_if *iface)
+{
+	int i;
+
+	for (i = 0; i < NET_IF_MAX_IPV6_ADDR; i++) {
+		if (!iface->ipv6.unicast[i].is_used ||
+		    (iface->ipv6.unicast[i].addr_state != NET_ADDR_TENTATIVE &&
+		     iface->ipv6.unicast[i].addr_state != NET_ADDR_PREFERRED) ||
+		    iface->ipv6.unicast[i].address.family != AF_INET6) {
+			continue;
+		}
+
+		if (!net_is_ipv6_ll_addr(
+			    &iface->ipv6.unicast[i].address.in6_addr)) {
+			return &iface->ipv6.unicast[i].address.in6_addr;
+		}
+	}
+
+	return NULL;
+}
+
 struct net_if_addr *net_if_ipv6_addr_add(struct net_if *iface,
 					 struct in6_addr *addr,
 					 enum net_addr_type addr_type,
@@ -684,6 +730,9 @@ struct net_if_addr *net_if_ipv6_addr_add(struct net_if *iface,
 	}
 
 	for (i = 0; i < NET_IF_MAX_IPV6_ADDR; i++) {
+#if defined(CONFIG_NET_RPL)
+		struct in6_addr *global;
+#endif
 		if (iface->ipv6.unicast[i].is_used) {
 			continue;
 		}
@@ -695,7 +744,27 @@ struct net_if_addr *net_if_ipv6_addr_add(struct net_if *iface,
 			net_sprint_ipv6_addr(addr),
 			net_addr_type2str(addr_type));
 
+		/* RFC 4862 5.4.2
+		 * "Before sending a Neighbor Solicitation, an interface
+		 * MUST join the all-nodes multicast address and the
+		 * solicited-node multicast address of the tentative address."
+		 */
+		/* The allnodes multicast group is only joined once as
+		 * net_ipv6_mcast_join() checks if we have already joined.
+		 */
+		join_mcast_allnodes(iface);
+		join_mcast_solicit_node(iface,
+				&iface->ipv6.unicast[i].address.in6_addr);
+
+#if defined(CONFIG_NET_RPL)
+		/* Do not send DAD for global addresses */
+		global = check_global_addr(iface);
+		if (!net_ipv6_addr_cmp(global, addr)) {
+			net_if_ipv6_start_dad(iface, &iface->ipv6.unicast[i]);
+		}
+#else
 		net_if_ipv6_start_dad(iface, &iface->ipv6.unicast[i]);
+#endif
 
 		net_mgmt_event_notify(NET_EVENT_IPV6_ADDR_ADD, iface);
 
@@ -1248,27 +1317,6 @@ struct in6_addr *net_if_ipv6_get_ll_addr(enum net_addr_state state,
 	return NULL;
 }
 
-static inline struct in6_addr *check_global_addr(struct net_if *iface)
-{
-	int i;
-
-	for (i = 0; i < NET_IF_MAX_IPV6_ADDR; i++) {
-		if (!iface->ipv6.unicast[i].is_used ||
-		    (iface->ipv6.unicast[i].addr_state != NET_ADDR_TENTATIVE &&
-		     iface->ipv6.unicast[i].addr_state != NET_ADDR_PREFERRED) ||
-		    iface->ipv6.unicast[i].address.family != AF_INET6) {
-			continue;
-		}
-
-		if (!net_is_ipv6_ll_addr(
-			    &iface->ipv6.unicast[i].address.in6_addr)) {
-			return &iface->ipv6.unicast[i].address.in6_addr;
-		}
-	}
-
-	return NULL;
-}
-
 struct in6_addr *net_if_ipv6_get_global_addr(struct net_if **iface)
 {
 	struct net_if *tmp;
@@ -1406,10 +1454,18 @@ const struct in6_addr *net_if_ipv6_select_src_addr(struct net_if *dst_iface,
 
 u32_t net_if_ipv6_calc_reachable_time(struct net_if *iface)
 {
-	return MIN_RANDOM_FACTOR * iface->ipv6.base_reachable_time +
-		sys_rand32_get() %
-		(MAX_RANDOM_FACTOR * iface->ipv6.base_reachable_time -
-		 MIN_RANDOM_FACTOR * iface->ipv6.base_reachable_time);
+	u32_t min_reachable, max_reachable;
+
+	min_reachable = (MIN_RANDOM_NUMER * iface->ipv6.base_reachable_time)
+			/ MIN_RANDOM_DENOM;
+	max_reachable = (MAX_RANDOM_NUMER * iface->ipv6.base_reachable_time)
+			/ MAX_RANDOM_DENOM;
+
+	NET_DBG("min_reachable:%u max_reachable:%u", min_reachable,
+		max_reachable);
+
+	return min_reachable +
+	       sys_rand32_get() % (max_reachable - min_reachable);
 }
 
 #else /* CONFIG_NET_IPV6 */
@@ -1481,7 +1537,7 @@ struct net_if_router *net_if_ipv4_router_add(struct net_if *iface,
 bool net_if_ipv4_addr_mask_cmp(struct net_if *iface,
 			       struct in_addr *addr)
 {
-	u32_t subnet = ntohl(addr->s_addr) &
+	u32_t subnet = ntohl(UNALIGNED_GET(&addr->s_addr)) &
 			ntohl(iface->ipv4.netmask.s_addr);
 	int i;
 
@@ -1557,32 +1613,43 @@ struct net_if_addr *net_if_ipv4_addr_add(struct net_if *iface,
 
 	ifaddr = ipv4_addr_find(iface, addr);
 	if (ifaddr) {
+		/* TODO: should set addr_type/vlifetime */
 		return ifaddr;
 	}
 
 	for (i = 0; i < NET_IF_MAX_IPV4_ADDR; i++) {
-		if (iface->ipv4.unicast[i].is_used) {
-			continue;
+		struct net_if_addr *cur = &iface->ipv4.unicast[i];
+		if (addr_type == NET_ADDR_DHCP
+		    && cur->addr_type == NET_ADDR_OVERRIDABLE) {
+			ifaddr = cur;
+			break;
 		}
 
-		iface->ipv4.unicast[i].is_used = true;
-		iface->ipv4.unicast[i].address.family = AF_INET;
-		iface->ipv4.unicast[i].address.in_addr.s4_addr32[0] =
+		if (!iface->ipv4.unicast[i].is_used) {
+			ifaddr = cur;
+			break;
+		}
+	}
+
+	if (ifaddr) {
+		ifaddr->is_used = true;
+		ifaddr->address.family = AF_INET;
+		ifaddr->address.in_addr.s4_addr32[0] =
 						addr->s4_addr32[0];
-		iface->ipv4.unicast[i].addr_type = addr_type;
+		ifaddr->addr_type = addr_type;
 
 		/* Caller has to take care of timers and their expiry */
 		if (vlifetime) {
-			iface->ipv4.unicast[i].is_infinite = false;
+			ifaddr->is_infinite = false;
 		} else {
-			iface->ipv4.unicast[i].is_infinite = true;
+			ifaddr->is_infinite = true;
 		}
 
 		/**
 		 *  TODO: Handle properly PREFERRED/DEPRECATED state when
 		 *  address in use, expired and renewal state.
 		 */
-		iface->ipv4.unicast[i].addr_state = NET_ADDR_PREFERRED;
+		ifaddr->addr_state = NET_ADDR_PREFERRED;
 
 		NET_DBG("[%d] interface %p address %s type %s added", i, iface,
 			net_sprint_ipv4_addr(addr),
@@ -1590,7 +1657,7 @@ struct net_if_addr *net_if_ipv4_addr_add(struct net_if *iface,
 
 		net_mgmt_event_notify(NET_EVENT_IPV4_ADDR_ADD, iface);
 
-		return &iface->ipv4.unicast[i];
+		return ifaddr;
 	}
 
 	return NULL;

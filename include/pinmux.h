@@ -32,6 +32,8 @@ extern "C" {
 #define PINMUX_FUNC_D		3
 #define PINMUX_FUNC_E		4
 #define PINMUX_FUNC_F		5
+#define PINMUX_FUNC_G		6
+#define PINMUX_FUNC_H		7
 
 #define PINMUX_PULLUP_ENABLE	(0x1)
 #define PINMUX_PULLUP_DISABLE	(0x0)
@@ -71,37 +73,40 @@ struct pinmux_driver_api {
 	pmux_input input;
 };
 
+__syscall int pinmux_pin_set(struct device *dev, u32_t pin, u32_t func);
 
-static inline int pinmux_pin_set(struct device *dev,
-				      u32_t pin,
-				      u32_t func)
+static inline int _impl_pinmux_pin_set(struct device *dev, u32_t pin,
+				       u32_t func)
 {
 	const struct pinmux_driver_api *api = dev->driver_api;
 
 	return api->set(dev, pin, func);
 }
 
-static inline int pinmux_pin_get(struct device *dev,
-				      u32_t pin,
-				      u32_t *func)
+__syscall int pinmux_pin_get(struct device *dev, u32_t pin, u32_t *func);
+
+static inline int _impl_pinmux_pin_get(struct device *dev, u32_t pin,
+				       u32_t *func)
 {
 	const struct pinmux_driver_api *api = dev->driver_api;
 
 	return api->get(dev, pin, func);
 }
 
-static inline int pinmux_pin_pullup(struct device *dev,
-					 u32_t pin,
-					 u8_t func)
+__syscall int pinmux_pin_pullup(struct device *dev, u32_t pin, u8_t func);
+
+static inline int _impl_pinmux_pin_pullup(struct device *dev, u32_t pin,
+					  u8_t func)
 {
 	const struct pinmux_driver_api *api = dev->driver_api;
 
 	return api->pullup(dev, pin, func);
 }
 
-static inline int pinmux_pin_input_enable(struct device *dev,
-					       u32_t pin,
-					       u8_t func)
+__syscall int pinmux_pin_input_enable(struct device *dev, u32_t pin, u8_t func);
+
+static inline int _impl_pinmux_pin_input_enable(struct device *dev,
+						u32_t pin, u8_t func)
 {
 	const struct pinmux_driver_api *api = dev->driver_api;
 
@@ -116,5 +121,7 @@ static inline int pinmux_pin_input_enable(struct device *dev,
  *
  * @}
  */
+
+#include <syscalls/pinmux.h>
 
 #endif /* __INCLUDE_PINMUX_H */

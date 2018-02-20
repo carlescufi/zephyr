@@ -14,6 +14,9 @@ int bt_mesh_pb_gatt_open(struct bt_conn *conn);
 int bt_mesh_pb_gatt_close(struct bt_conn *conn);
 int bt_mesh_pb_gatt_recv(struct bt_conn *conn, struct net_buf_simple *buf);
 
-const u8_t *bt_mesh_prov_get_uuid(void);
+const struct bt_mesh_prov *bt_mesh_prov_get(void);
 
-void bt_mesh_prov_init(const struct bt_mesh_prov *prov);
+int bt_mesh_prov_init(const struct bt_mesh_prov *prov);
+
+void bt_mesh_prov_complete(u16_t net_idx, u16_t addr);
+void bt_mesh_prov_reset(void);

@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2017 Linaro Limited
+ * Copyright (c) 2018 Open Source Foundries Ltd.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -27,6 +28,7 @@
 
 #include <zephyr/types.h>
 #include <stddef.h>
+#include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 #include <ctype.h>
@@ -37,7 +39,7 @@
 #include <net/net_ip.h>
 #include <net/net_pkt.h>
 #include <net/udp.h>
-#include <net/zoap.h>
+#include <net/coap.h>
 #include <net/lwm2m.h>
 
 #include "lwm2m_object.h"
@@ -51,9 +53,9 @@
 #include "lwm2m_rd_client.h"
 #endif
 
-#define ENGINE_UPDATE_INTERVAL 500
+#define ENGINE_UPDATE_INTERVAL K_MSEC(500)
 
-#define DISCOVER_PREFACE	"</.well-known/core>;ct=40"
+#define WELL_KNOWN_CORE_PATH	"</.well-known/core>"
 
 /*
  * TODO: to implement a way for clients to specify alternate path
@@ -75,7 +77,19 @@
 #define REG_PREFACE		""
 #endif
 
-#define BUF_ALLOC_TIMEOUT K_SECONDS(1)
+#if defined(CONFIG_NET_APP_DTLS)
+#define INSTANCE_INFO "Zephyr DTLS LwM2M-client"
+#endif
+
+#if defined(CONFIG_COAP_EXTENDED_OPTIONS_LEN)
+#define	COAP_OPTION_BUF_LEN	(CONFIG_COAP_EXTENDED_OPTIONS_LEN_VALUE + 1)
+#else
+#define	COAP_OPTION_BUF_LEN	13
+#endif
+
+/* TODO: grab this from server obj */
+#define DEFAULT_SERVER_PMIN	10
+#define DEFAULT_SERVER_PMAX	60
 
 #define MAX_TOKEN_LEN		8
 
@@ -96,9 +110,21 @@ struct observe_node {
 
 static struct observe_node observe_node_data[CONFIG_LWM2M_ENGINE_MAX_OBSERVER];
 
+#define MAX_PERIODIC_SERVICE	10
+
+struct service_node {
+	sys_snode_t node;
+	void (*service_fn)(void);
+	u32_t min_call_period;
+	u64_t last_timestamp;
+};
+
+static struct service_node service_node_data[MAX_PERIODIC_SERVICE];
+
 static sys_slist_t engine_obj_list;
 static sys_slist_t engine_obj_inst_list;
 static sys_slist_t engine_observer_list;
+static sys_slist_t engine_service_list;
 
 #define NUM_BLOCK1_CONTEXT	CONFIG_LWM2M_NUM_BLOCK1_CONTEXT
 
@@ -110,13 +136,20 @@ static sys_slist_t engine_observer_list;
 #define GET_MORE(v)		(!!((v) & 0x08))
 
 struct block_context {
-	struct zoap_block_context ctx;
+	struct coap_block_context ctx;
 	s64_t timestamp;
 	u8_t token[8];
 	u8_t tkl;
 };
 
 static struct block_context block1_contexts[NUM_BLOCK1_CONTEXT];
+
+/* write-attribute related definitons */
+static const char * const LWM2M_ATTR_STR[] = { "pmin", "pmax",
+					       "gt", "lt", "st" };
+static const u8_t LWM2M_ATTR_LEN[] = { 4, 4, 2, 2, 2 };
+
+static struct lwm2m_attr write_attr_pool[CONFIG_LWM2M_NUM_ATTR];
 
 /* periodic / notify / observe handling stack */
 static K_THREAD_STACK_DEFINE(engine_thread_stack,
@@ -162,7 +195,7 @@ static char *sprint_token(const u8_t *token, u8_t tkl)
 		int i;
 
 		for (i = 0; i < tkl; i++) {
-			pos += snprintf(&buf[pos], 31 - pos, "%x", token[i]);
+			pos += snprintk(&buf[pos], 31 - pos, "%x", token[i]);
 		}
 
 		buf[pos] = '\0';
@@ -178,26 +211,26 @@ static char *sprint_token(const u8_t *token, u8_t tkl)
 
 /* block-wise transfer functions */
 
-enum zoap_block_size lwm2m_default_block_size(void)
+enum coap_block_size lwm2m_default_block_size(void)
 {
 	switch (CONFIG_LWM2M_COAP_BLOCK_SIZE) {
 	case 16:
-		return ZOAP_BLOCK_16;
+		return COAP_BLOCK_16;
 	case 32:
-		return ZOAP_BLOCK_32;
+		return COAP_BLOCK_32;
 	case 64:
-		return ZOAP_BLOCK_64;
+		return COAP_BLOCK_64;
 	case 128:
-		return ZOAP_BLOCK_128;
+		return COAP_BLOCK_128;
 	case 256:
-		return ZOAP_BLOCK_256;
+		return COAP_BLOCK_256;
 	case 512:
-		return ZOAP_BLOCK_512;
+		return COAP_BLOCK_512;
 	case 1024:
-		return ZOAP_BLOCK_1024;
+		return COAP_BLOCK_1024;
 	}
 
-	return ZOAP_BLOCK_256;
+	return COAP_BLOCK_256;
 }
 
 static int
@@ -231,7 +264,7 @@ init_block_ctx(const u8_t *token, u8_t tkl, struct block_context **ctx)
 
 	(*ctx)->tkl = tkl;
 	memcpy((*ctx)->token, token, tkl);
-	zoap_block_transfer_init(&(*ctx)->ctx, lwm2m_default_block_size(), 0);
+	coap_block_transfer_init(&(*ctx)->ctx, lwm2m_default_block_size(), 0);
 	(*ctx)->timestamp = timestamp;
 
 	return 0;
@@ -273,6 +306,50 @@ static void free_block_ctx(struct block_context *ctx)
 
 /* observer functions */
 
+struct notification_attrs {
+	/* use to determine which value is set */
+	u8_t flags;
+	float32_value_t gt;
+	float32_value_t lt;
+	float32_value_t st;
+	s32_t pmin;
+	s32_t pmax;
+};
+
+static int update_attrs(sys_slist_t *list, struct notification_attrs *out)
+{
+	struct lwm2m_attr *attr;
+
+	SYS_SLIST_FOR_EACH_CONTAINER(list, attr, node) {
+		switch (attr->type) {
+		case LWM2M_ATTR_PMIN:
+			out->pmin = attr->int_val;
+			break;
+		case LWM2M_ATTR_PMAX:
+			out->pmax = attr->int_val;
+			break;
+		case LWM2M_ATTR_LT:
+			out->lt = attr->float_val;
+			break;
+		case LWM2M_ATTR_GT:
+			out->gt = attr->float_val;
+			break;
+		case LWM2M_ATTR_STEP:
+			out->st = attr->float_val;
+			break;
+		default:
+			SYS_LOG_ERR("Unrecognize attr: %d",
+				    attr->type);
+			return -EINVAL;
+		}
+
+		/* mark as set */
+		out->flags |= BIT(attr->type);
+	}
+
+	return 0;
+}
+
 int lwm2m_notify_observer(u16_t obj_id, u16_t obj_inst_id, u16_t res_id)
 {
 	struct observe_node *obs;
@@ -308,9 +385,15 @@ static int engine_add_observer(struct lwm2m_message *msg,
 			       struct lwm2m_obj_path *path,
 			       u16_t format)
 {
+	struct lwm2m_engine_obj *obj = NULL;
 	struct lwm2m_engine_obj_inst *obj_inst = NULL;
 	struct observe_node *obs;
 	struct sockaddr *addr;
+	struct notification_attrs attrs = {
+		.flags = BIT(LWM2M_ATTR_PMIN) || BIT(LWM2M_ATTR_PMAX),
+		.pmin  = DEFAULT_SERVER_PMIN,
+		.pmax  = DEFAULT_SERVER_PMAX,
+	};
 	int i;
 
 	if (!msg || !msg->ctx) {
@@ -327,10 +410,37 @@ static int engine_add_observer(struct lwm2m_message *msg,
 	/* remote addr */
 	addr = &msg->ctx->net_app_ctx.default_ctx->remote;
 
+	/* TODO: get server object for default pmin/pmax
+	 * and observe dup checking
+	 */
+
+	/* make sure this observer doesn't exist already */
+	SYS_SLIST_FOR_EACH_CONTAINER(&engine_observer_list, obs, node) {
+		/* TODO: distinguish server object */
+		if (obs->ctx == msg->ctx &&
+		    memcmp(&obs->path, path, sizeof(*path)) == 0) {
+			/* quietly update the token information */
+			memcpy(obs->token, token, tkl);
+			obs->tkl = tkl;
+
+			SYS_LOG_DBG("OBSERVER DUPLICATE %u/%u/%u(%u) [%s]",
+				    path->obj_id, path->obj_inst_id,
+				    path->res_id, path->level,
+				    lwm2m_sprint_ip_addr(addr));
+
+			return 0;
+		}
+	}
+
 	/* check if object exists */
-	if (!get_engine_obj(path->obj_id)) {
+	obj = get_engine_obj(path->obj_id);
+	if (!obj) {
 		SYS_LOG_ERR("unable to find obj: %u", path->obj_id);
 		return -ENOENT;
+	}
+
+	if (update_attrs(&obj->attr_list, &attrs) < 0) {
+		return -EINVAL;
 	}
 
 	/* check if object instance exists */
@@ -341,6 +451,10 @@ static int engine_add_observer(struct lwm2m_message *msg,
 			SYS_LOG_ERR("unable to find obj_inst: %u/%u",
 				    path->obj_id, path->obj_inst_id);
 			return -ENOENT;
+		}
+
+		if (update_attrs(&obj_inst->attr_list, &attrs) < 0) {
+			return -EINVAL;
 		}
 	}
 
@@ -358,22 +472,10 @@ static int engine_add_observer(struct lwm2m_message *msg,
 				    path->res_id);
 			return -ENOENT;
 		}
-	}
 
-	/* make sure this observer doesn't exist already */
-	SYS_SLIST_FOR_EACH_CONTAINER(&engine_observer_list, obs, node) {
-		if (obs->ctx == msg->ctx &&
-		    memcmp(&obs->path, path, sizeof(*path)) == 0) {
-			/* quietly update the token information */
-			memcpy(obs->token, token, tkl);
-			obs->tkl = tkl;
-
-			SYS_LOG_DBG("OBSERVER DUPLICATE %u/%u/%u(%u) [%s]",
-				    path->obj_id, path->obj_inst_id,
-				    path->res_id, path->level,
-				    lwm2m_sprint_ip_addr(addr));
-
-			return 0;
+		if (update_attrs(&obj_inst->resources[i].attr_list,
+				 &attrs) < 0) {
+			return -EINVAL;
 		}
 	}
 
@@ -398,9 +500,8 @@ static int engine_add_observer(struct lwm2m_message *msg,
 	observe_node_data[i].last_timestamp = k_uptime_get();
 	observe_node_data[i].event_timestamp =
 			observe_node_data[i].last_timestamp;
-	/* TODO: use server object instance or WRITE_ATTR values */
-	observe_node_data[i].min_period_sec = 10;
-	observe_node_data[i].max_period_sec = 60;
+	observe_node_data[i].min_period_sec = attrs.pmin;
+	observe_node_data[i].max_period_sec = max(attrs.pmax, attrs.pmin);
 	observe_node_data[i].format = format;
 	observe_node_data[i].counter = 1;
 	sys_slist_append(&engine_observer_list,
@@ -455,8 +556,7 @@ static void engine_remove_observer_by_id(u16_t obj_id, s32_t obj_inst_id)
 	SYS_SLIST_FOR_EACH_CONTAINER_SAFE(
 			&engine_observer_list, obs, tmp, node) {
 		if (!(obj_id == obs->path.obj_id &&
-		      (obj_inst_id < 0 ||
-		       obj_inst_id == obs->path.obj_inst_id))) {
+		      obj_inst_id == obs->path.obj_inst_id)) {
 			prev_node = &obs->node;
 			continue;
 		}
@@ -590,10 +690,12 @@ int lwm2m_create_obj_inst(u16_t obj_id, u16_t obj_inst_id,
 	obj->instance_count++;
 	(*obj_inst)->obj = obj;
 	(*obj_inst)->obj_inst_id = obj_inst_id;
-	sprintf((*obj_inst)->path, "%u/%u", obj_id, obj_inst_id);
+	snprintk((*obj_inst)->path, MAX_RESOURCE_LEN, "%u/%u",
+		 obj_id, obj_inst_id);
 	for (i = 0; i < (*obj_inst)->resource_count; i++) {
-		sprintf((*obj_inst)->resources[i].path, "%u/%u/%u",
-			obj_id, obj_inst_id, (*obj_inst)->resources[i].res_id);
+		snprintk((*obj_inst)->resources[i].path, MAX_RESOURCE_LEN,
+			 "%u/%u/%u", obj_id, obj_inst_id,
+			 (*obj_inst)->resources[i].res_id);
 	}
 
 	engine_register_obj_inst(*obj_inst);
@@ -608,6 +710,8 @@ int lwm2m_delete_obj_inst(u16_t obj_id, u16_t obj_inst_id)
 	int i, ret = 0;
 	struct lwm2m_engine_obj *obj;
 	struct lwm2m_engine_obj_inst *obj_inst;
+	struct lwm2m_attr *attr, *tmp;
+	sys_snode_t *prev_node = NULL;
 
 	obj = get_engine_obj(obj_id);
 	if (!obj) {
@@ -628,8 +732,23 @@ int lwm2m_delete_obj_inst(u16_t obj_id, u16_t obj_inst_id)
 
 	/* reset obj_inst and res_inst data structure */
 	for (i = 0; i < obj_inst->resource_count; i++) {
+		SYS_SLIST_FOR_EACH_CONTAINER_SAFE(
+				&obj_inst->resources[i].attr_list, attr,
+				tmp, node) {
+			sys_slist_remove(&obj_inst->resources[i].attr_list,
+					 prev_node, &attr->node);
+			memset(attr, 0, sizeof(*attr));
+		}
+
 		memset(obj_inst->resources + i, 0,
 		       sizeof(struct lwm2m_engine_res_inst));
+	}
+
+	SYS_SLIST_FOR_EACH_CONTAINER_SAFE(
+			&obj_inst->attr_list, attr, tmp, node) {
+		sys_slist_remove(&obj_inst->attr_list, prev_node,
+				 &attr->node);
+		memset(attr, 0, sizeof(*attr));
 	}
 
 	memset(obj_inst, 0, sizeof(struct lwm2m_engine_obj_inst));
@@ -641,18 +760,18 @@ int lwm2m_delete_obj_inst(u16_t obj_id, u16_t obj_inst_id)
 
 /* utility functions */
 
-static int get_option_int(const struct zoap_packet *zpkt, u8_t opt)
+static int get_option_int(const struct coap_packet *cpkt, u8_t opt)
 {
-	struct zoap_option option = {};
+	struct coap_option option = {};
 	u16_t count = 1;
 	int r;
 
-	r = zoap_find_options(zpkt, opt, &option, count);
+	r = coap_find_options(cpkt, opt, &option, count);
 	if (r <= 0) {
 		return -ENOENT;
 	}
 
-	return zoap_option_value_to_int(&option);
+	return coap_option_value_to_int(&option);
 }
 
 static void engine_clear_context(struct lwm2m_engine_context *context)
@@ -687,41 +806,71 @@ static u16_t atou16(u8_t *buf, u16_t buflen, u16_t *len)
 	return val;
 }
 
-static void zoap_options_to_path(struct zoap_option *opt, int options_count,
-				 struct lwm2m_obj_path *path)
+static int atof32(const char *input, float32_value_t *out)
 {
-	u16_t len;
+	char *pos, *end, buf[24];
+	long int val;
+	s32_t base = 1000000, sign = 1;
 
-	path->level = options_count;
-	path->obj_id = atou16(opt[0].value, opt[0].len, &len);
-	if (len == 0) {
-		path->level = 0;
+	if (!input || !out) {
+		return -EINVAL;
 	}
 
-	if (path->level > 1) {
-		path->obj_inst_id = atou16(opt[1].value, opt[1].len, &len);
-		if (len == 0) {
-			path->level = 1;
-		}
+	strncpy(buf, input, sizeof(buf) - 1);
+	buf[sizeof(buf) - 1] = '\0';
+
+	if (strchr(buf, '-')) {
+		sign = -1;
 	}
 
-	if (path->level > 2) {
-		path->res_id = atou16(opt[2].value, opt[2].len, &len);
-		if (len == 0) {
-			path->level = 2;
-		}
+	pos = strchr(buf, '.');
+	if (pos) {
+		*pos = '\0';
 	}
 
-	if (path->level > 3) {
-		path->res_inst_id = atou16(opt[3].value, opt[3].len, &len);
-		if (len == 0) {
-			path->level = 3;
-		}
+	errno = 0;
+	val = strtol(buf, &end, 10);
+	if (errno || *end || val > INT_MAX || val < INT_MIN) {
+		return -EINVAL;
 	}
+
+	out->val1 = (s32_t) val;
+	out->val2 = 0;
+
+	if (!pos) {
+		return 0;
+	}
+
+	while (*(++pos) && base > 1 && isdigit(*pos)) {
+		out->val2 = out->val2 * 10 + (*pos - '0');
+		base /= 10;
+	}
+
+	out->val2 *= sign * base;
+	return !*pos || base == 1 ? 0 : -EINVAL;
 }
 
-static struct lwm2m_message *find_msg(struct zoap_pending *pending,
-				      struct zoap_reply *reply)
+static int coap_options_to_path(struct coap_option *opt, int options_count,
+				struct lwm2m_obj_path *path)
+{
+	u16_t len, *id[4] = { &path->obj_id, &path->obj_inst_id,
+			      &path->res_id, &path->res_inst_id };
+
+	path->level = options_count;
+
+	for (int i = 0; i < options_count; i++) {
+		*id[i] = atou16(opt[i].value, opt[i].len, &len);
+		if (len == 0 || opt[i].len != len) {
+			path->level = i;
+			break;
+		}
+	}
+
+	return options_count == path->level ? 0 : -EINVAL;
+}
+
+static struct lwm2m_message *find_msg(struct coap_pending *pending,
+				      struct coap_reply *reply)
 {
 	size_t i;
 
@@ -756,22 +905,31 @@ struct lwm2m_message *lwm2m_get_message(struct lwm2m_ctx *client_ctx)
 	return NULL;
 }
 
-void lwm2m_release_message(struct lwm2m_message *msg)
+void lwm2m_reset_message(struct lwm2m_message *msg, bool release)
 {
 	if (!msg) {
 		return;
 	}
 
 	if (msg->pending) {
-		zoap_pending_clear(msg->pending);
+		coap_pending_clear(msg->pending);
 	}
 
 	if (msg->reply) {
 		/* make sure we want to clear the reply */
-		zoap_reply_clear(msg->reply);
+		coap_reply_clear(msg->reply);
 	}
 
-	memset(msg, 0, sizeof(*msg));
+	if (release) {
+		memset(msg, 0, sizeof(*msg));
+	} else {
+		if (msg->cpkt.pkt) {
+			net_pkt_unref(msg->cpkt.pkt);
+		}
+
+		msg->message_timeout_cb = NULL;
+		memset(&msg->cpkt, 0, sizeof(msg->cpkt));
+	}
 }
 
 int lwm2m_init_message(struct lwm2m_message *msg)
@@ -779,7 +937,9 @@ int lwm2m_init_message(struct lwm2m_message *msg)
 	struct net_pkt *pkt;
 	struct net_app_ctx *app_ctx;
 	struct net_buf *frag;
-	int r;
+	u8_t tokenlen = 0;
+	u8_t *token = NULL;
+	int r = 0;
 
 	if (!msg || !msg->ctx) {
 		SYS_LOG_ERR("LwM2M message is invalid.");
@@ -800,40 +960,32 @@ int lwm2m_init_message(struct lwm2m_message *msg)
 		goto cleanup;
 	}
 
-	r = zoap_packet_init(&msg->zpkt, pkt);
+	/*
+	 * msg->tkl == 0 is for a new TOKEN
+	 * msg->tkl == LWM2M_MSG_TOKEN_LEN_SKIP means dont set
+	 */
+	if (msg->tkl == 0) {
+		tokenlen = 0;
+		token = coap_next_token();
+	} else if (msg->token && msg->tkl != LWM2M_MSG_TOKEN_LEN_SKIP) {
+		tokenlen = msg->tkl;
+		token = msg->token;
+	}
+
+	r = coap_packet_init(&msg->cpkt, pkt, 1, msg->type,
+			     tokenlen, token, msg->code,
+			     (msg->mid > 0 ? msg->mid : coap_next_id()));
 	if (r < 0) {
-		SYS_LOG_ERR("zoap packet init error (err:%d)", r);
+		SYS_LOG_ERR("coap packet init error (err:%d)", r);
 		goto cleanup;
 	}
 
-	/* FIXME: Could be that zoap_packet_init() sets some defaults */
-	zoap_header_set_version(&msg->zpkt, 1);
-	zoap_header_set_type(&msg->zpkt, msg->type);
-	zoap_header_set_code(&msg->zpkt, msg->code);
-
-	if (msg->mid > 0) {
-		zoap_header_set_id(&msg->zpkt, msg->mid);
-	} else {
-		zoap_header_set_id(&msg->zpkt, zoap_next_id());
-	}
-
-	/*
-	 * tkl == 0 is for a new TOKEN
-	 * tkl == LWM2M_MSG_TOKEN_LEN_SKIP means dont set
-	 */
-	if (msg->tkl == 0) {
-		zoap_header_set_token(&msg->zpkt, zoap_next_token(),
-				      MAX_TOKEN_LEN);
-	} else if (msg->token && msg->tkl != LWM2M_MSG_TOKEN_LEN_SKIP) {
-		zoap_header_set_token(&msg->zpkt, msg->token, msg->tkl);
-	}
-
 	/* only TYPE_CON messages need pending tracking / reply handling */
-	if (msg->type != ZOAP_TYPE_CON) {
+	if (msg->type != COAP_TYPE_CON) {
 		return 0;
 	}
 
-	msg->pending = zoap_pending_next_unused(
+	msg->pending = coap_pending_next_unused(
 				msg->ctx->pendings,
 				CONFIG_LWM2M_ENGINE_MAX_PENDING);
 	if (!msg->pending) {
@@ -843,7 +995,7 @@ int lwm2m_init_message(struct lwm2m_message *msg)
 		goto cleanup;
 	}
 
-	r = zoap_pending_init(msg->pending, &msg->zpkt,
+	r = coap_pending_init(msg->pending, &msg->cpkt,
 			      &app_ctx->default_ctx->remote);
 	if (r < 0) {
 		SYS_LOG_ERR("Unable to initialize a pending "
@@ -851,11 +1003,8 @@ int lwm2m_init_message(struct lwm2m_message *msg)
 		goto cleanup;
 	}
 
-	/* clear out pkt to avoid double unref */
-	pkt = NULL;
-
 	if (msg->reply_cb) {
-		msg->reply = zoap_reply_next_unused(
+		msg->reply = coap_reply_next_unused(
 				msg->ctx->replies,
 				CONFIG_LWM2M_ENGINE_MAX_REPLIES);
 		if (!msg->reply) {
@@ -865,14 +1014,14 @@ int lwm2m_init_message(struct lwm2m_message *msg)
 			goto cleanup;
 		}
 
-		zoap_reply_init(msg->reply, &msg->zpkt);
+		coap_reply_init(msg->reply, &msg->cpkt);
 		msg->reply->reply = msg->reply_cb;
 	}
 
 	return 0;
 
 cleanup:
-	lwm2m_release_message(msg);
+	lwm2m_reset_message(msg, true);
 	if (pkt) {
 		net_pkt_unref(pkt);
 	}
@@ -889,28 +1038,39 @@ int lwm2m_send_message(struct lwm2m_message *msg)
 		return -EINVAL;
 	}
 
+	if (msg->type == COAP_TYPE_CON) {
+		/*
+		 * Increase packet ref count to avoid being unref after
+		 * net_app_send_pkt()
+		 */
+		coap_pending_cycle(msg->pending);
+	}
+
 	msg->send_attempts++;
-	ret = net_app_send_pkt(&msg->ctx->net_app_ctx, msg->zpkt.pkt,
+	ret = net_app_send_pkt(&msg->ctx->net_app_ctx, msg->cpkt.pkt,
 			       &msg->ctx->net_app_ctx.default_ctx->remote,
 			       NET_SOCKADDR_MAX_SIZE, K_NO_WAIT, NULL);
 	if (ret < 0) {
+		if (msg->type == COAP_TYPE_CON) {
+			coap_pending_clear(msg->pending);
+		}
+
 		return ret;
 	}
 
-	if (msg->type == ZOAP_TYPE_CON) {
+	if (msg->type == COAP_TYPE_CON) {
+		/* don't re-queue the retransmit work on retransmits */
 		if (msg->send_attempts > 1) {
 			return 0;
 		}
 
-		zoap_pending_cycle(msg->pending);
 		k_delayed_work_submit(&msg->ctx->retransmit_work,
 				      msg->pending->timeout);
 	} else {
-		/* if we're not expecting an ACK, free up the msg data */
-		lwm2m_release_message(msg);
+		lwm2m_reset_message(msg, true);
 	}
 
-	return 0;
+	return ret;
 }
 
 u16_t lwm2m_get_rd_data(u8_t *client_data, u16_t size)
@@ -933,7 +1093,7 @@ u16_t lwm2m_get_rd_data(u8_t *client_data, u16_t size)
 
 		/* Only report <OBJ_ID> when no instance available */
 		if (obj->instance_count == 0) {
-			len = snprintf(temp, sizeof(temp), "%s</%u>",
+			len = snprintk(temp, sizeof(temp), "%s</%u>",
 				       (pos > 0) ? "," : "", obj->obj_id);
 			if (pos + len >= size) {
 				/* full buffer -- exit loop */
@@ -948,7 +1108,7 @@ u16_t lwm2m_get_rd_data(u8_t *client_data, u16_t size)
 		SYS_SLIST_FOR_EACH_CONTAINER(&engine_obj_inst_list,
 					     obj_inst, node) {
 			if (obj_inst->obj->obj_id == obj->obj_id) {
-				len = snprintf(temp, sizeof(temp),
+				len = snprintk(temp, sizeof(temp),
 					       "%s</%s>",
 					       (pos > 0) ? "," : "",
 					       obj_inst->path);
@@ -973,9 +1133,13 @@ u16_t lwm2m_get_rd_data(u8_t *client_data, u16_t size)
 
 /* input / output selection */
 
-static u16_t select_writer(struct lwm2m_output_context *out, u16_t accept)
+static int select_writer(struct lwm2m_output_context *out, u16_t accept)
 {
 	switch (accept) {
+
+	case LWM2M_FORMAT_APP_LINK_FORMAT:
+		/* TODO: rewrite do_discover as content formatter */
+		break;
 
 	case LWM2M_FORMAT_PLAIN_TEXT:
 	case LWM2M_FORMAT_OMA_PLAIN_TEXT:
@@ -995,21 +1159,19 @@ static u16_t select_writer(struct lwm2m_output_context *out, u16_t accept)
 #endif
 
 	default:
-		SYS_LOG_ERR("Unknown Accept type %u, using LWM2M plain text",
-			    accept);
-		out->writer = &plain_text_writer;
-		accept = LWM2M_FORMAT_PLAIN_TEXT;
-		break;
+		SYS_LOG_WRN("Unknown content type %u", accept);
+		return -ENOMSG;
 
 	}
 
-	return accept;
+	return 0;
 }
 
-static u16_t select_reader(struct lwm2m_input_context *in, u16_t format)
+static int select_reader(struct lwm2m_input_context *in, u16_t format)
 {
 	switch (format) {
 
+	case LWM2M_FORMAT_APP_OCTET_STREAM:
 	case LWM2M_FORMAT_PLAIN_TEXT:
 	case LWM2M_FORMAT_OMA_PLAIN_TEXT:
 		in->reader = &plain_text_reader;
@@ -1021,15 +1183,11 @@ static u16_t select_reader(struct lwm2m_input_context *in, u16_t format)
 		break;
 
 	default:
-		SYS_LOG_ERR("Unknown content type %u, using LWM2M plain text",
-			    format);
-		in->reader = &plain_text_reader;
-		format = LWM2M_FORMAT_PLAIN_TEXT;
-		break;
-
+		SYS_LOG_WRN("Unknown content type %u", format);
+		return -ENOMSG;
 	}
 
-	return format;
+	return 0;
 }
 
 /* user data setter functions */
@@ -1206,6 +1364,10 @@ static int lwm2m_engine_set(char *pathstr, void *value, u16_t len)
 
 	switch (obj_field->data_type) {
 
+	case LWM2M_RES_TYPE_OPAQUE:
+		memcpy((u8_t *)data_ptr, value, len);
+		break;
+
 	case LWM2M_RES_TYPE_STRING:
 		memcpy((u8_t *)data_ptr, value, len);
 		((u8_t *)data_ptr)[len] = '\0';
@@ -1270,9 +1432,8 @@ static int lwm2m_engine_set(char *pathstr, void *value, u16_t len)
 	}
 
 	if (res->post_write_cb) {
-		/* ignore return value here */
-		res->post_write_cb(obj_inst->obj_inst_id, data_ptr, len,
-				   false, 0);
+		ret = res->post_write_cb(obj_inst->obj_inst_id, data_ptr, len,
+					 false, 0);
 	}
 
 	if (changed) {
@@ -1280,6 +1441,11 @@ static int lwm2m_engine_set(char *pathstr, void *value, u16_t len)
 	}
 
 	return ret;
+}
+
+int lwm2m_engine_set_opaque(char *pathstr, char *data_ptr, u16_t data_len)
+{
+	return lwm2m_engine_set(pathstr, data_ptr, data_len);
 }
 
 int lwm2m_engine_set_string(char *pathstr, char *data_ptr)
@@ -1353,7 +1519,6 @@ static int lwm2m_engine_get(char *pathstr, void *buf, u16_t buflen)
 	struct lwm2m_engine_obj_inst *obj_inst;
 	struct lwm2m_engine_obj_field *obj_field;
 	struct lwm2m_engine_res_inst *res = NULL;
-	u16_t len = 0;
 	void *data_ptr = NULL;
 	size_t data_len = 0;
 
@@ -1417,11 +1582,15 @@ static int lwm2m_engine_get(char *pathstr, void *buf, u16_t buflen)
 		switch (obj_field->data_type) {
 
 		case LWM2M_RES_TYPE_OPAQUE:
+			if (data_len > buflen) {
+				return -ENOMEM;
+			}
+
+			memcpy(buf, data_ptr, data_len);
 			break;
 
 		case LWM2M_RES_TYPE_STRING:
 			strncpy((u8_t *)buf, (u8_t *)data_ptr, buflen);
-			len = strlen(buf);
 			break;
 
 		case LWM2M_RES_TYPE_U64:
@@ -1486,9 +1655,14 @@ static int lwm2m_engine_get(char *pathstr, void *buf, u16_t buflen)
 	return 0;
 }
 
-int lwm2m_engine_get_string(char *pathstr, void *str, u16_t strlen)
+int lwm2m_engine_get_opaque(char *pathstr, void *buf, u16_t buflen)
 {
-	return lwm2m_engine_get(pathstr, str, strlen);
+	return lwm2m_engine_get(pathstr, buf, buflen);
+}
+
+int lwm2m_engine_get_string(char *pathstr, void *buf, u16_t buflen)
+{
+	return lwm2m_engine_get(pathstr, buf, buflen);
 }
 
 u8_t lwm2m_engine_get_u8(char *pathstr)
@@ -1609,8 +1783,7 @@ static int engine_get_resource(struct lwm2m_obj_path *path,
 	return 0;
 }
 
-static int engine_get_resource_from_pathstr(char *pathstr,
-			       struct lwm2m_engine_res_inst **res)
+int lwm2m_engine_get_resource(char *pathstr, struct lwm2m_engine_res_inst **res)
 {
 	int ret;
 	struct lwm2m_obj_path path;
@@ -1635,7 +1808,7 @@ int lwm2m_engine_register_read_callback(char *pathstr,
 	int ret;
 	struct lwm2m_engine_res_inst *res = NULL;
 
-	ret = engine_get_resource_from_pathstr(pathstr, &res);
+	ret = lwm2m_engine_get_resource(pathstr, &res);
 	if (ret < 0) {
 		return ret;
 	}
@@ -1650,7 +1823,7 @@ int lwm2m_engine_register_pre_write_callback(char *pathstr,
 	int ret;
 	struct lwm2m_engine_res_inst *res = NULL;
 
-	ret = engine_get_resource_from_pathstr(pathstr, &res);
+	ret = lwm2m_engine_get_resource(pathstr, &res);
 	if (ret < 0) {
 		return ret;
 	}
@@ -1665,7 +1838,7 @@ int lwm2m_engine_register_post_write_callback(char *pathstr,
 	int ret;
 	struct lwm2m_engine_res_inst *res = NULL;
 
-	ret = engine_get_resource_from_pathstr(pathstr, &res);
+	ret = lwm2m_engine_get_resource(pathstr, &res);
 	if (ret < 0) {
 		return ret;
 	}
@@ -1680,7 +1853,7 @@ int lwm2m_engine_register_exec_callback(char *pathstr,
 	int ret;
 	struct lwm2m_engine_res_inst *res = NULL;
 
-	ret = engine_get_resource_from_pathstr(pathstr, &res);
+	ret = lwm2m_engine_get_resource(pathstr, &res);
 	if (ret < 0) {
 		return ret;
 	}
@@ -1696,8 +1869,8 @@ static int lwm2m_read_handler(struct lwm2m_engine_obj_inst *obj_inst,
 			      struct lwm2m_engine_obj_field *obj_field,
 			      struct lwm2m_engine_context *context)
 {
-	struct lwm2m_output_context *out = context->out;
-	struct lwm2m_obj_path *path = context->path;
+	struct lwm2m_output_context *out;
+	struct lwm2m_obj_path *path;
 	int i, loop_max = 1;
 	u16_t res_inst_id_tmp = 0;
 	void *data_ptr = NULL;
@@ -1706,6 +1879,9 @@ static int lwm2m_read_handler(struct lwm2m_engine_obj_inst *obj_inst,
 	if (!obj_inst || !res || !obj_field || !context) {
 		return -EINVAL;
 	}
+
+	out = context->out;
+	path = context->path;
 
 	/* setup initial data elements */
 	data_ptr = res->data_ptr;
@@ -1721,6 +1897,11 @@ static int lwm2m_read_handler(struct lwm2m_engine_obj_inst *obj_inst,
 	}
 
 	if (res->multi_count_var != NULL) {
+		/* if multi_count_var is 0 (none assigned) return NOT_FOUND */
+		if (*res->multi_count_var == 0) {
+			return -ENOENT;
+		}
+
 		engine_put_begin_ri(out, path);
 		loop_max = *res->multi_count_var;
 		res_inst_id_tmp = path->res_inst_id;
@@ -1815,14 +1996,77 @@ static int lwm2m_read_handler(struct lwm2m_engine_obj_inst *obj_inst,
 	return 0;
 }
 
+size_t lwm2m_engine_get_opaque_more(struct lwm2m_input_context *in,
+				    u8_t *buf, size_t buflen, bool *last_block)
+{
+	u16_t in_len = in->opaque_len;
+
+	if (in_len > buflen) {
+		in_len = buflen;
+	}
+
+	in->opaque_len -= in_len;
+	if (in->opaque_len == 0) {
+		*last_block = true;
+	}
+
+	in->frag = net_frag_read(in->frag, in->offset, &in->offset, in_len,
+				 buf);
+	if (!in->frag && in->offset == 0xffff) {
+		*last_block = true;
+		return 0;
+	}
+
+	return (size_t)in_len;
+}
+
+static int lwm2m_write_handler_opaque(struct lwm2m_engine_obj_inst *obj_inst,
+				      struct lwm2m_engine_res_inst *res,
+				      struct lwm2m_input_context *in,
+				      void *data_ptr, size_t data_len,
+				      bool last_block, size_t total_size)
+{
+	size_t len = 1;
+	bool last_pkt_block = false, first_read = true;
+	int ret = 0;
+
+	while (!last_pkt_block && len > 0) {
+		if (first_read) {
+			len = engine_get_opaque(in, (u8_t *)data_ptr,
+						data_len, &last_pkt_block);
+			first_read = false;
+		} else {
+			len = lwm2m_engine_get_opaque_more(in, (u8_t *)data_ptr,
+							   data_len,
+							   &last_pkt_block);
+		}
+
+		if (len == 0) {
+			return -EINVAL;
+		}
+
+		if (res->post_write_cb) {
+			ret = res->post_write_cb(obj_inst->obj_inst_id,
+						 data_ptr, len,
+						 last_pkt_block && last_block,
+						 total_size);
+			if (ret < 0) {
+				return ret;
+			}
+		}
+	}
+
+	return ret;
+}
+
 /* This function is exposed for the content format writers */
 int lwm2m_write_handler(struct lwm2m_engine_obj_inst *obj_inst,
 			struct lwm2m_engine_res_inst *res,
 			struct lwm2m_engine_obj_field *obj_field,
 			struct lwm2m_engine_context *context)
 {
-	struct lwm2m_input_context *in = context->in;
-	struct lwm2m_obj_path *path = context->path;
+	struct lwm2m_input_context *in;
+	struct lwm2m_obj_path *path;
 	s64_t temp64 = 0;
 	s32_t temp32 = 0;
 	void *data_ptr = NULL;
@@ -1831,7 +2075,7 @@ int lwm2m_write_handler(struct lwm2m_engine_obj_inst *obj_inst,
 	size_t total_size = 0;
 	int ret = 0;
 	u8_t tkl = 0;
-	const u8_t *token;
+	u8_t token[8];
 	bool last_block = true;
 	struct block_context *block_ctx = NULL;
 
@@ -1839,29 +2083,49 @@ int lwm2m_write_handler(struct lwm2m_engine_obj_inst *obj_inst,
 		return -EINVAL;
 	}
 
+	in = context->in;
+	path = context->path;
+
 	/* setup initial data elements */
 	data_ptr = res->data_ptr;
 	data_len = res->data_len;
-
-	/* setup data_ptr/data_len for OPAQUE when it has none setup */
-	if (obj_field->data_type == LWM2M_RES_TYPE_OPAQUE &&
-	    data_ptr == NULL && data_len == 0) {
-		data_ptr = in->inbuf;
-		data_len = in->insize;
-	}
 
 	/* allow user to override data elements via callback */
 	if (res->pre_write_cb) {
 		data_ptr = res->pre_write_cb(obj_inst->obj_inst_id, &data_len);
 	}
 
+	if (res->post_write_cb) {
+		/* Get block1 option for checking MORE block flag */
+		ret = get_option_int(in->in_cpkt, COAP_OPTION_BLOCK1);
+		if (ret >= 0) {
+			last_block = !GET_MORE(ret);
+
+			/* Get block_ctx for total_size (might be zero) */
+			tkl = coap_header_get_token(in->in_cpkt, token);
+			if (tkl && !get_block_ctx(token, tkl, &block_ctx)) {
+				total_size = block_ctx->ctx.total_size;
+				SYS_LOG_DBG("BLOCK1: total:%zu current:%zu"
+					    " last:%u",
+					    block_ctx->ctx.total_size,
+					    block_ctx->ctx.current,
+					    last_block);
+			}
+		}
+	}
+
 	if (data_ptr && data_len > 0) {
 		switch (obj_field->data_type) {
 
-		/* do nothing for OPAQUE (probably has a callback) */
 		case LWM2M_RES_TYPE_OPAQUE:
-			data_ptr = in->inbuf;
-			len = in->insize;
+			ret = lwm2m_write_handler_opaque(obj_inst, res, in,
+							 data_ptr, data_len,
+							 last_block,
+							 total_size);
+			if (ret < 0) {
+				return ret;
+			}
+
 			break;
 
 		case LWM2M_RES_TYPE_STRING:
@@ -1941,26 +2205,10 @@ int lwm2m_write_handler(struct lwm2m_engine_obj_inst *obj_inst,
 		}
 	}
 
-	if (res->post_write_cb) {
-		/* Get block1 option for checking MORE block flag */
-		ret = get_option_int(in->in_zpkt, ZOAP_OPTION_BLOCK1);
-		if (ret >= 0) {
-			last_block = !GET_MORE(ret);
-
-			/* Get block_ctx for total_size (might be zero) */
-			token = zoap_header_get_token(in->in_zpkt, &tkl);
-			if (token != NULL &&
-			    !get_block_ctx(token, tkl, &block_ctx)) {
-				total_size = block_ctx->ctx.total_size;
-			}
-		}
-
-		/* ignore return value here */
+	if (res->post_write_cb &&
+	    obj_field->data_type != LWM2M_RES_TYPE_OPAQUE) {
 		ret = res->post_write_cb(obj_inst->obj_inst_id, data_ptr, len,
 					 last_block, total_size);
-		if (ret >= 0) {
-			ret = 0;
-		}
 	}
 
 	NOTIFY_OBSERVER_PATH(path);
@@ -1969,13 +2217,324 @@ int lwm2m_write_handler(struct lwm2m_engine_obj_inst *obj_inst,
 }
 
 static int lwm2m_write_attr_handler(struct lwm2m_engine_obj *obj,
-			     struct lwm2m_engine_context *context)
+				    struct lwm2m_engine_context *context)
 {
+	bool update_observe_node = false;
+	char opt_buf[COAP_OPTION_BUF_LEN];
+	int nr_opt, ret = 0;
+	struct coap_option options[NR_LWM2M_ATTR];
+	struct lwm2m_engine_obj_inst *obj_inst = NULL;
+	struct lwm2m_engine_res_inst *res = NULL;
+	struct lwm2m_input_context *in;
+	struct lwm2m_obj_path *path;
+	struct lwm2m_attr *attr, *tmp;
+	struct notification_attrs nattrs = { 0 };
+	struct observe_node *obs;
+	sys_slist_t *attr_list;
+	sys_snode_t *prev_node = NULL;
+	u8_t type = 0;
+	void *nattr_ptrs[NR_LWM2M_ATTR] = {
+		&nattrs.pmin, &nattrs.pmax, &nattrs.gt, &nattrs.lt, &nattrs.st
+	};
+
 	if (!obj || !context) {
 		return -EINVAL;
 	}
 
-	/* TODO: set parameters on resource for notification */
+	/* do not expose security obj */
+	if (obj->obj_id == LWM2M_OBJECT_SECURITY_ID) {
+		return -ENOENT;
+	}
+
+	in = context->in;
+	path = context->path;
+
+	nr_opt = coap_find_options(in->in_cpkt, COAP_OPTION_URI_QUERY,
+				   options, NR_LWM2M_ATTR);
+	if (nr_opt <= 0) {
+		SYS_LOG_ERR("No attribute found!");
+		/* translate as bad request */
+		return -EEXIST;
+	}
+
+	/* get lwm2m_attr slist */
+	if (path->level == 3) {
+		ret = engine_get_resource(path, &res);
+		if (ret < 0) {
+			return ret;
+		}
+
+		attr_list = &res->attr_list;
+	} else if (path->level == 1) {
+		attr_list = &obj->attr_list;
+	} else if (path->level == 2) {
+		obj_inst = get_engine_obj_inst(path->obj_id, path->obj_inst_id);
+		if (!obj_inst) {
+			return -ENOENT;
+		}
+
+		attr_list = &obj_inst->attr_list;
+	} else {
+		/* bad request */
+		return -EEXIST;
+	}
+
+	/* retrieve existing attributes */
+	update_attrs(attr_list, &nattrs);
+
+	/* loop through options to parse attribute */
+	for (int i = 0; i < nr_opt; i++) {
+		int limit = min(options[i].len, 5), plen = 0, vlen;
+		float32_value_t val = { 0 };
+		type = 0;
+
+		/* search for '=' */
+		while (plen < limit && options[i].value[plen] != '=') {
+			plen += 1;
+		}
+
+		/* either length = 2(gt/lt/st) or = 4(pmin/pmax) */
+		if (plen != 2 && plen != 4) {
+			continue;
+		}
+
+		/* matching attribute name */
+		for (type = 0; type < NR_LWM2M_ATTR; type++) {
+			if (LWM2M_ATTR_LEN[type] == plen &&
+			    !memcmp(options[i].value, LWM2M_ATTR_STR[type],
+				    LWM2M_ATTR_LEN[type])) {
+				break;
+			}
+		}
+
+		/* unrecognized attribute */
+		if (type == NR_LWM2M_ATTR) {
+			continue;
+		}
+
+		/* unset attribute when no value's given */
+		if (options[i].len == plen) {
+			nattrs.flags &= ~BIT(type);
+
+			memset(nattr_ptrs[type], 0,
+			       type <= LWM2M_ATTR_PMAX ?
+			       sizeof(s32_t) : sizeof(float32_value_t));
+			continue;
+		}
+
+		/* gt/lt/st cannot be assigned to obj/obj_inst unless unset */
+		if (plen == 2 && path->level <= 2) {
+			return -EEXIST;
+		}
+
+		vlen = options[i].len - plen - 1;
+		memcpy(opt_buf, options[i].value + plen + 1, vlen);
+		opt_buf[vlen] = '\0';
+
+		/* convert value to integer or float */
+		if (plen == 4) {
+			char *end;
+			long int v;
+
+			/* pmin/pmax: integer (sec 5.1.2)
+			 * however, negative is non-sense
+			 */
+			errno = 0;
+			v = strtol(opt_buf, &end, 10);
+			if (errno || *end || v > INT_MAX || v < 0) {
+				ret = -EINVAL;
+			}
+
+			val.val1 = v;
+		} else {
+			/* gt/lt/st: type float */
+			ret = atof32(opt_buf, &val);
+		}
+
+		if (ret < 0) {
+			SYS_LOG_ERR("invalid attr[%s] value",
+				    LWM2M_ATTR_STR[type]);
+			/* bad request */
+			return -EEXIST;
+		}
+
+		if (type <= LWM2M_ATTR_PMAX) {
+			*(s32_t *)nattr_ptrs[type] = val.val1;
+		} else {
+			memcpy(nattr_ptrs[type], &val, sizeof(float32_value_t));
+		}
+
+		nattrs.flags |= BIT(type);
+	}
+
+	if ((nattrs.flags & (BIT(LWM2M_ATTR_PMIN) | BIT(LWM2M_ATTR_PMAX))) &&
+	    nattrs.pmin > nattrs.pmax) {
+		SYS_LOG_DBG("pmin (%d) > pmax (%d)", nattrs.pmin, nattrs.pmax);
+		return -EEXIST;
+	}
+
+	if (nattrs.flags & (BIT(LWM2M_ATTR_LT) | BIT(LWM2M_ATTR_GT))) {
+		if (!((nattrs.lt.val1 < nattrs.gt.val1) ||
+		      (nattrs.lt.val2 < nattrs.gt.val2))) {
+			SYS_LOG_DBG("lt > gt");
+			return -EEXIST;
+		}
+
+		if (nattrs.flags & BIT(LWM2M_ATTR_STEP)) {
+			s32_t st1 = nattrs.st.val1 * 2 +
+				    nattrs.st.val2 * 2 / 1000000;
+			s32_t st2 = nattrs.st.val2 * 2 % 1000000;
+			if (!(((nattrs.lt.val1 + st1) < nattrs.gt.val1) ||
+			      ((nattrs.lt.val2 + st2) < nattrs.gt.val2))) {
+				SYS_LOG_DBG("lt + 2*st > gt");
+				return -EEXIST;
+			}
+		}
+	}
+
+	SYS_SLIST_FOR_EACH_CONTAINER_SAFE(attr_list, attr, tmp, node) {
+		type = attr->type;
+
+		if (!(BIT(type) & nattrs.flags)) {
+			SYS_LOG_DBG("Unset attr %s", LWM2M_ATTR_STR[type]);
+			sys_slist_remove(attr_list, prev_node, &attr->node);
+			memset(attr, 0, sizeof(*attr));
+
+			if (type <= LWM2M_ATTR_PMAX) {
+				update_observe_node = true;
+			}
+
+			continue;
+		}
+
+		prev_node = &attr->node;
+		nattrs.flags &= ~BIT(type);
+
+		if (type <= LWM2M_ATTR_PMAX) {
+			if (attr->int_val == *(s32_t *)nattr_ptrs[type]) {
+				continue;
+			}
+
+			attr->int_val = *(s32_t *)nattr_ptrs[type];
+			update_observe_node = true;
+		} else {
+			if (!memcmp(&attr->float_val, nattr_ptrs[type],
+				    sizeof(float32_value_t))) {
+				continue;
+			}
+
+			memcpy(&attr->float_val, nattr_ptrs[type],
+			       sizeof(float32_value_t));
+		}
+
+		SYS_LOG_DBG("Update %s to %d.%06d", LWM2M_ATTR_STR[type],
+			    attr->float_val.val1, attr->float_val.val2);
+	}
+
+	/* add attribute to obj/obj_inst/res */
+	for (type = 0; nattrs.flags && type < NR_LWM2M_ATTR; type++) {
+		int i;
+
+		if (!(BIT(type) & nattrs.flags)) {
+			continue;
+		}
+
+		/* grab an entry for newly added attribute */
+		for (i = 0; i < CONFIG_LWM2M_NUM_ATTR; i++) {
+			if (!write_attr_pool[i].used) {
+				break;
+			}
+		}
+
+		if (i == CONFIG_LWM2M_NUM_ATTR) {
+			return -ENOMEM;
+		}
+
+		attr = write_attr_pool + i;
+		attr->type = type;
+		attr->used = true;
+		if (type <= LWM2M_ATTR_PMAX) {
+			attr->int_val = *(s32_t *)nattr_ptrs[type];
+			update_observe_node = true;
+		} else {
+			memcpy(&attr->float_val, nattr_ptrs[type],
+			       sizeof(float32_value_t));
+		}
+
+		sys_slist_append(attr_list, &attr->node);
+		nattrs.flags &= ~BIT(type);
+		SYS_LOG_DBG("Add %s to %d.%06d", LWM2M_ATTR_STR[type],
+			    attr->float_val.val1, attr->float_val.val2);
+	}
+
+	/* check only pmin/pmax */
+	if (!update_observe_node) {
+		return 0;
+	}
+
+	/* update observe_node accordingly */
+	SYS_SLIST_FOR_EACH_CONTAINER(&engine_observer_list, obs, node) {
+		/* updated path is deeper than obs node, skip */
+		if (path->level > obs->path.level) {
+			continue;
+		}
+
+		/* check obj id matched or not */
+		if (path->obj_id != obs->path.obj_id) {
+			continue;
+		}
+
+		/* TODO: grab default from server obj */
+		nattrs.pmin = DEFAULT_SERVER_PMIN;
+		nattrs.pmax = DEFAULT_SERVER_PMAX;
+
+		update_attrs(&obj->attr_list, &nattrs);
+
+		if (obs->path.level > 1) {
+			if (path->level > 1 &&
+			    path->obj_inst_id != obs->path.obj_inst_id) {
+				continue;
+			}
+
+			/* get obj_inst */
+			if (!obj_inst || obj_inst->obj_inst_id !=
+					 obs->path.obj_inst_id) {
+				obj_inst = get_engine_obj_inst(
+						obs->path.obj_id,
+						obs->path.obj_inst_id);
+				if (!obj_inst) {
+					return -ENOENT;
+				}
+			}
+
+			update_attrs(&obj_inst->attr_list, &nattrs);
+		}
+
+		if (obs->path.level > 2) {
+			if (path->level > 2 &&
+			    path->res_id != obs->path.res_id) {
+				continue;
+			}
+
+			if (!res || res->res_id != obs->path.res_id) {
+				ret = engine_get_resource(&obs->path, &res);
+				if (ret < 0) {
+					return ret;
+				}
+			}
+
+			update_attrs(&res->attr_list, &nattrs);
+		}
+
+		SYS_LOG_DBG("%d/%d/%d(%d) updated from %d/%d to %u/%u",
+			    obs->path.obj_id, obs->path.obj_inst_id,
+			    obs->path.res_id, obs->path.level,
+			    obs->min_period_sec, obs->max_period_sec,
+			    nattrs.pmin, max(nattrs.pmin, nattrs.pmax));
+		obs->min_period_sec = (u32_t)nattrs.pmin;
+		obs->max_period_sec = (u32_t)max(nattrs.pmin, nattrs.pmax);
+		memset(&nattrs, 0, sizeof(nattrs));
+	}
 
 	return 0;
 }
@@ -1983,7 +2542,7 @@ static int lwm2m_write_attr_handler(struct lwm2m_engine_obj *obj,
 static int lwm2m_exec_handler(struct lwm2m_engine_obj *obj,
 			      struct lwm2m_engine_context *context)
 {
-	struct lwm2m_obj_path *path = context->path;
+	struct lwm2m_obj_path *path;
 	struct lwm2m_engine_obj_inst *obj_inst;
 	struct lwm2m_engine_res_inst *res = NULL;
 	int ret;
@@ -1991,6 +2550,8 @@ static int lwm2m_exec_handler(struct lwm2m_engine_obj *obj,
 	if (!obj || !context) {
 		return -EINVAL;
 	}
+
+	path = context->path;
 
 	obj_inst = get_engine_obj_inst(path->obj_id, path->obj_inst_id);
 	if (!obj_inst) {
@@ -2021,39 +2582,46 @@ static int lwm2m_delete_handler(struct lwm2m_engine_obj *obj,
 				     context->path->obj_inst_id);
 }
 
-/*
- * ZoAP API needs to create the net_pkt buffer in the correct order.
- * This function performs last minute verification that outbuf is initialized.
- */
-static void outbuf_init_check(struct lwm2m_output_context *out)
-{
-	if (!out->outbuf) {
-		out->outbuf = zoap_packet_get_payload(out->out_zpkt,
-						      &out->outsize);
-	}
-}
-
 #define MATCH_NONE	0
 #define MATCH_ALL	1
 #define MATCH_SINGLE	2
 
 static int do_read_op(struct lwm2m_engine_obj *obj,
-		      struct lwm2m_engine_context *context)
+		      struct lwm2m_engine_context *context,
+		      u16_t content_format)
 {
 	struct lwm2m_output_context *out = context->out;
 	struct lwm2m_obj_path *path = context->path;
 	struct lwm2m_engine_obj_inst *obj_inst;
-	int ret = 0, pos = 0, index, match_type;
+	int ret = 0, index, match_type;
 	u8_t num_read = 0;
 	u8_t initialized;
 	struct lwm2m_engine_res_inst *res;
 	struct lwm2m_engine_obj_field *obj_field;
-	u16_t temp_res_id;
+	u16_t temp_res_id, temp_len;
 
 	obj_inst = get_engine_obj_inst(path->obj_id, path->obj_inst_id);
 	if (!obj_inst) {
 		return -ENOENT;
 	}
+
+	/* set output content-format */
+	ret = coap_append_option_int(out->out_cpkt, COAP_OPTION_CONTENT_FORMAT,
+				     content_format);
+	if (ret < 0) {
+		SYS_LOG_ERR("Error setting response content-format: %d", ret);
+		return ret;
+	}
+
+	ret = coap_packet_append_payload_marker(out->out_cpkt);
+	if (ret < 0) {
+		SYS_LOG_ERR("Error appending payload marker: %d", ret);
+		return ret;
+	}
+
+	out->frag = coap_packet_get_payload(out->out_cpkt, &out->offset,
+					    &temp_len);
+	out->offset++;
 
 	while (obj_inst) {
 		if (!obj_inst->resources || obj_inst->resource_count == 0) {
@@ -2101,9 +2669,8 @@ static int do_read_op(struct lwm2m_engine_obj *obj,
 				    LWM2M_PERM_R) != LWM2M_PERM_R) {
 				ret = -EPERM;
 			} else {
-				/* outbuf init / formatter startup if needed */
+				/* formatter startup if needed */
 				if (!initialized) {
-					outbuf_init_check(out);
 					engine_put_begin(out, path);
 					initialized = 1;
 				}
@@ -2116,7 +2683,6 @@ static int do_read_op(struct lwm2m_engine_obj *obj,
 					SYS_LOG_ERR("READ OP failed: %d", ret);
 				} else {
 					num_read += 1;
-					pos = out->outlen;
 				}
 			}
 
@@ -2135,7 +2701,6 @@ static int do_read_op(struct lwm2m_engine_obj *obj,
 		/* if we wrote anything, finish formatting */
 		if (initialized) {
 			engine_put_end(out, path);
-			pos = out->outlen;
 		}
 
 		/* advance to the next object instance */
@@ -2148,52 +2713,205 @@ static int do_read_op(struct lwm2m_engine_obj *obj,
 		return -ENOENT;
 	}
 
-	out->outlen = pos;
 	return ret;
 }
 
-static int do_discover_op(struct lwm2m_engine_context *context)
+static int print_attr(struct net_pkt *pkt, char *buf, u16_t buflen,
+		      sys_slist_t *attr_list)
 {
-	struct lwm2m_output_context *out = context->out;
+	struct lwm2m_attr *attr;
+	int used, base;
+	u8_t digit;
+	s32_t fraction;
+
+	SYS_SLIST_FOR_EACH_CONTAINER(attr_list, attr, node) {
+		/* assuming integer will have float_val.val2 set as 0 */
+
+		used = snprintk(buf, buflen, ";%s=%s%d%s",
+				LWM2M_ATTR_STR[attr->type],
+				attr->float_val.val1 == 0 &&
+				attr->float_val.val2 < 0 ? "-" : "",
+				attr->float_val.val1,
+				attr->float_val.val2 != 0 ? "." : "");
+
+		base = 100000;
+		fraction = attr->float_val.val2 < 0 ?
+			   -attr->float_val.val2 : attr->float_val.val2;
+		while (fraction && used < buflen && base > 0) {
+			digit = fraction / base;
+			buf[used++] = '0' + digit;
+			fraction -= digit * base;
+			base /= 10;
+		}
+
+		if (!net_pkt_append_all(pkt, used, buf, BUF_ALLOC_TIMEOUT)) {
+			return -ENOMEM;
+		}
+	}
+
+	return 0;
+}
+
+static int do_discover_op(struct lwm2m_engine_context *context, bool well_known)
+{
+	static char disc_buf[24];
+	struct lwm2m_engine_obj *obj;
 	struct lwm2m_engine_obj_inst *obj_inst;
-	int i = 0;
+	struct lwm2m_obj_path *path = context->path;
+	struct lwm2m_output_context *out = context->out;
+	int ret;
+	u16_t temp_len;
+	bool reported = false;
+
+	/* object ID is required unless it's bootstrap discover (TODO) or it's
+	 * a ".well-known/core" discovery
+	 * ref: lwm2m spec 20170208-A table 11
+	 */
+	if (!well_known &&
+	    (path->level == 0 ||
+	     (path->level > 0 && path->obj_id == LWM2M_OBJECT_SECURITY_ID))) {
+		return -EPERM;
+	}
 
 	/* set output content-format */
-	zoap_add_option_int(out->out_zpkt,
-			    ZOAP_OPTION_CONTENT_FORMAT,
-			    LWM2M_FORMAT_APP_LINK_FORMAT);
+	ret = coap_append_option_int(out->out_cpkt,
+				     COAP_OPTION_CONTENT_FORMAT,
+				     LWM2M_FORMAT_APP_LINK_FORMAT);
+	if (ret < 0) {
+		SYS_LOG_ERR("Error setting response content-format: %d", ret);
+		return ret;
+	}
 
-	/* init the outbuffer */
-	out->outbuf = zoap_packet_get_payload(out->out_zpkt,
-					      &out->outsize);
+	ret = coap_packet_append_payload_marker(out->out_cpkt);
+	if (ret < 0) {
+		return ret;
+	}
 
-	/* </.well-known/core>,**;ct=40 */
-	memcpy(out->outbuf, DISCOVER_PREFACE, strlen(DISCOVER_PREFACE));
-	out->outlen += strlen(DISCOVER_PREFACE);
+	out->frag = coap_packet_get_payload(out->out_cpkt, &out->offset,
+					    &temp_len);
+	out->offset++;
+
+	/* Handle CoAP .well-known/core discover */
+	if (well_known) {
+		/* </.well-known/core> */
+		if (!net_pkt_append_all(out->out_cpkt->pkt,
+					strlen(WELL_KNOWN_CORE_PATH),
+					WELL_KNOWN_CORE_PATH,
+					BUF_ALLOC_TIMEOUT)) {
+			return -ENOMEM;
+		}
+
+		SYS_SLIST_FOR_EACH_CONTAINER(&engine_obj_list, obj, node) {
+			snprintk(disc_buf, sizeof(disc_buf), ",</%u>",
+				 obj->obj_id);
+			if (!net_pkt_append_all(out->out_cpkt->pkt,
+						strlen(disc_buf), disc_buf,
+						BUF_ALLOC_TIMEOUT)) {
+				return -ENOMEM;
+			}
+		}
+
+		return 0;
+	}
+
+	/* TODO: lwm2m spec 20170208-A sec 5.2.7.3 bootstrap discover on "/"
+	 * - report object 0 (security) with ssid
+	 * - prefixed w/ lwm2m enabler version. e.g. lwm2m="1.0"
+	 * - returns object and object instances only
+	 */
 
 	SYS_SLIST_FOR_EACH_CONTAINER(&engine_obj_inst_list, obj_inst, node) {
 		/* TODO: support bootstrap discover
 		 * Avoid discovery for security object (5.2.7.3)
+		 * Skip reporting unrelated object
 		 */
-		if (obj_inst->obj->obj_id == LWM2M_OBJECT_SECURITY_ID) {
+		if (obj_inst->obj->obj_id == LWM2M_OBJECT_SECURITY_ID ||
+		    obj_inst->obj->obj_id != path->obj_id) {
 			continue;
 		}
 
-		out->outlen += sprintf(&out->outbuf[out->outlen], ",</%u/%u>",
-				       obj_inst->obj->obj_id,
-				       obj_inst->obj_inst_id);
+		if (path->level == 1) {
+			snprintk(disc_buf, sizeof(disc_buf), "%s</%u>",
+				 reported ? "," : "",
+				 obj_inst->obj->obj_id);
+			if (!net_pkt_append_all(out->out_cpkt->pkt,
+						strlen(disc_buf), disc_buf,
+						BUF_ALLOC_TIMEOUT)) {
+				return -ENOMEM;
+			}
 
-		for (i = 0; i < obj_inst->resource_count; i++) {
-			out->outlen += sprintf(&out->outbuf[out->outlen],
-					       ",</%u/%u/%u>",
-					       obj_inst->obj->obj_id,
-					       obj_inst->obj_inst_id,
-					       obj_inst->resources[i].res_id);
+			/* report object attrs (5.4.2) */
+			ret = print_attr(out->out_cpkt->pkt,
+					 disc_buf, sizeof(disc_buf),
+					 &obj_inst->obj->attr_list);
+			if (ret < 0) {
+				return ret;
+			}
+
+			reported = true;
+		}
+
+		/* skip unrelated object instance */
+		if (path->level > 1 &&
+		    path->obj_inst_id != obj_inst->obj_inst_id) {
+			continue;
+		}
+
+		if (path->level == 2) {
+			snprintk(disc_buf, sizeof(disc_buf), "%s</%u/%u>",
+				 reported ? "," : "",
+				 obj_inst->obj->obj_id, obj_inst->obj_inst_id);
+			if (!net_pkt_append_all(out->out_cpkt->pkt,
+						strlen(disc_buf), disc_buf,
+						BUF_ALLOC_TIMEOUT)) {
+				return -ENOMEM;
+			}
+
+			/* report object instance attrs (5.4.2) */
+			ret = print_attr(out->out_cpkt->pkt,
+					 disc_buf, sizeof(disc_buf),
+					 &obj_inst->attr_list);
+			if (ret < 0) {
+				return ret;
+			}
+
+			reported = true;
+		}
+
+		for (int i = 0; i < obj_inst->resource_count; i++) {
+			/* skip unrelated resources */
+			if (path->level == 3 &&
+			    path->res_id != obj_inst->resources[i].res_id) {
+				continue;
+			}
+
+			snprintk(disc_buf, sizeof(disc_buf),
+				 "%s</%u/%u/%u>",
+				 reported ? "," : "",
+				 obj_inst->obj->obj_id,
+				 obj_inst->obj_inst_id,
+				 obj_inst->resources[i].res_id);
+			if (!net_pkt_append_all(out->out_cpkt->pkt,
+						strlen(disc_buf), disc_buf,
+						BUF_ALLOC_TIMEOUT)) {
+				return -ENOMEM;
+			}
+
+			/* report resource attrs when path > 1 (5.4.2) */
+			if (path->level > 1) {
+				ret = print_attr(out->out_cpkt->pkt,
+					disc_buf, sizeof(disc_buf),
+					&obj_inst->resources[i].attr_list);
+				if (ret < 0) {
+					return ret;
+				}
+			}
+
+			reported = true;
 		}
 	}
 
-	out->outbuf[out->outlen] = '\0';
-	return 0;
+	return reported ? 0 : -ENOENT;
 }
 
 int lwm2m_get_or_create_engine_obj(struct lwm2m_engine_context *context,
@@ -2215,8 +2933,6 @@ int lwm2m_get_or_create_engine_obj(struct lwm2m_engine_context *context,
 			return ret;
 		}
 
-		zoap_header_set_code(context->in->in_zpkt,
-				     ZOAP_RESPONSE_CODE_CREATED);
 		/* set created flag to one */
 		if (created) {
 			*created = 1;
@@ -2232,6 +2948,7 @@ static int do_write_op(struct lwm2m_engine_obj *obj,
 {
 	switch (format) {
 
+	case LWM2M_FORMAT_APP_OCTET_STREAM:
 	case LWM2M_FORMAT_PLAIN_TEXT:
 	case LWM2M_FORMAT_OMA_PLAIN_TEXT:
 		return do_write_op_plain_text(obj, context);
@@ -2248,30 +2965,30 @@ static int do_write_op(struct lwm2m_engine_obj *obj,
 
 	default:
 		SYS_LOG_ERR("Unsupported format: %u", format);
-		return -EINVAL;
+		return -ENOMSG;
 
 	}
 }
 
-static int handle_request(struct zoap_packet *request,
+static int handle_request(struct coap_packet *request,
 			  struct lwm2m_message *msg)
 {
 	int r;
 	u8_t code;
-	struct zoap_option options[4];
-	struct lwm2m_engine_obj *obj;
-	const u8_t *token;
+	struct coap_option options[4];
+	struct lwm2m_engine_obj *obj = NULL;
+	u8_t token[8];
 	u8_t tkl = 0;
-	u16_t format, accept;
+	u16_t format = LWM2M_FORMAT_NONE, accept;
 	struct lwm2m_input_context in;
 	struct lwm2m_output_context out;
 	struct lwm2m_obj_path path;
 	struct lwm2m_engine_context context;
 	int observe = -1; /* default to -1, 0 = ENABLE, 1 = DISABLE */
-	bool discover = false;
+	bool well_known = false;
 	struct block_context *block_ctx = NULL;
-	size_t block_offset = 0;
-	enum zoap_block_size block_size;
+	enum coap_block_size block_size;
+	bool last_block = false;
 
 	/* setup engine context */
 	memset(&context, 0, sizeof(struct lwm2m_engine_context));
@@ -2280,117 +2997,160 @@ static int handle_request(struct zoap_packet *request,
 	context.path = &path;
 	engine_clear_context(&context);
 
-	/* set ZoAP request / message */
-	in.in_zpkt = request;
-	out.out_zpkt = &msg->zpkt;
+	/* set CoAP request / message */
+	in.in_cpkt = request;
+	out.out_cpkt = &msg->cpkt;
 
 	/* set default reader/writer */
 	in.reader = &plain_text_reader;
 	out.writer = &plain_text_writer;
 
+	code = coap_header_get_code(in.in_cpkt);
+
+	/* setup response token */
+	tkl = coap_header_get_token(in.in_cpkt, token);
+	if (tkl) {
+		msg->tkl = tkl;
+		msg->token = token;
+	}
+
 	/* parse the URL path into components */
-	r = zoap_find_options(in.in_zpkt, ZOAP_OPTION_URI_PATH, options, 4);
-	if (r > 0) {
-		/* check for .well-known/core URI query (DISCOVER) */
-		if (r == 2 &&
-		    (options[0].len == 11 &&
-		     strncmp(options[0].value, ".well-known", 11) == 0) &&
-		    (options[1].len == 4 &&
-		     strncmp(options[1].value, "core", 4) == 0)) {
-			discover = true;
-		} else {
-			zoap_options_to_path(options, r, &path);
+	r = coap_find_options(in.in_cpkt, COAP_OPTION_URI_PATH, options, 4);
+	if (r <= 0) {
+		/* '/' is used by bootstrap-delete only */
+
+		/*
+		 * TODO: Handle bootstrap deleted --
+		 * re-add when DTLS support ready
+		 */
+		r = -EPERM;
+		goto error;
+	}
+
+	/* check for .well-known/core URI query (DISCOVER) */
+	if (r == 2 &&
+	    (options[0].len == 11 &&
+	     strncmp(options[0].value, ".well-known", 11) == 0) &&
+	    (options[1].len == 4 &&
+	     strncmp(options[1].value, "core", 4) == 0)) {
+		if ((code & COAP_REQUEST_MASK) != COAP_METHOD_GET) {
+			r = -EPERM;
+			goto error;
+		}
+
+		well_known = true;
+	} else {
+		r = coap_options_to_path(options, r, &path);
+		if (r < 0) {
+			r = -ENOENT;
+			goto error;
 		}
 	}
 
-	/* read Content Format */
-	r = zoap_find_options(in.in_zpkt, ZOAP_OPTION_CONTENT_FORMAT,
+	/* read Content Format / setup in.reader */
+	r = coap_find_options(in.in_cpkt, COAP_OPTION_CONTENT_FORMAT,
 			      options, 1);
 	if (r > 0) {
-		format = zoap_option_value_to_int(&options[0]);
-	} else {
-		SYS_LOG_DBG("No content-format given. Assume text plain.");
-		format = LWM2M_FORMAT_PLAIN_TEXT;
+		format = coap_option_value_to_int(&options[0]);
+		r = select_reader(&in, format);
+		if (r < 0) {
+			goto error;
+		}
 	}
 
-	/* read Accept */
-	r = zoap_find_options(in.in_zpkt, ZOAP_OPTION_ACCEPT, options, 1);
+	/* read Accept / setup out.writer */
+	r = coap_find_options(in.in_cpkt, COAP_OPTION_ACCEPT, options, 1);
 	if (r > 0) {
-		accept = zoap_option_value_to_int(&options[0]);
+		accept = coap_option_value_to_int(&options[0]);
 	} else {
 		SYS_LOG_DBG("No accept option given. Assume OMA TLV.");
 		accept = LWM2M_FORMAT_OMA_TLV;
 	}
 
-	/* TODO: Handle bootstrap deleted -- re-add when DTLS support ready */
-
-	code = zoap_header_get_code(in.in_zpkt);
-
-	/* find registered obj */
-	obj = get_engine_obj(path.obj_id);
-	if (!obj) {
-		/* No matching object found - ignore request */
-		return -ENOENT;
+	r = select_writer(&out, accept);
+	if (r < 0) {
+		goto error;
 	}
 
-	format = select_reader(&in, format);
-	accept = select_writer(&out, accept);
+	if (!well_known) {
+		/* find registered obj */
+		obj = get_engine_obj(path.obj_id);
+		if (!obj) {
+			/* No matching object found - ignore request */
+			r = -ENOENT;
+			goto error;
+		}
+	}
 
 	/* set the operation */
-	switch (code & ZOAP_REQUEST_MASK) {
+	switch (code & COAP_REQUEST_MASK) {
 
-	case ZOAP_METHOD_GET:
-		if (discover || format == LWM2M_FORMAT_APP_LINK_FORMAT) {
+	case COAP_METHOD_GET:
+		/*
+		 * LwM2M V1_0_1-20170704-A, table 25,
+		 * Discover: CoAP GET + accept=LWM2M_FORMAT_APP_LINK_FORMAT
+		 */
+		if (well_known || accept == LWM2M_FORMAT_APP_LINK_FORMAT) {
 			context.operation = LWM2M_OP_DISCOVER;
 			accept = LWM2M_FORMAT_APP_LINK_FORMAT;
 		} else {
 			context.operation = LWM2M_OP_READ;
 		}
+
 		/* check for observe */
-		observe = get_option_int(in.in_zpkt, ZOAP_OPTION_OBSERVE);
-		zoap_header_set_code(out.out_zpkt, ZOAP_RESPONSE_CODE_CONTENT);
+		observe = get_option_int(in.in_cpkt, COAP_OPTION_OBSERVE);
+		msg->code = COAP_RESPONSE_CODE_CONTENT;
 		break;
 
-	case ZOAP_METHOD_POST:
-		if (path.level < 2) {
-			/* write/create a object instance */
+	case COAP_METHOD_POST:
+		if (path.level == 1) {
+			/* create an object instance */
 			context.operation = LWM2M_OP_CREATE;
+			msg->code = COAP_RESPONSE_CODE_CREATED;
+		} else if (path.level == 2) {
+			/* write values to an object instance */
+			context.operation = LWM2M_OP_WRITE;
+			msg->code = COAP_RESPONSE_CODE_CHANGED;
 		} else {
 			context.operation = LWM2M_OP_EXECUTE;
+			msg->code = COAP_RESPONSE_CODE_CHANGED;
 		}
-		zoap_header_set_code(out.out_zpkt, ZOAP_RESPONSE_CODE_CHANGED);
+
 		break;
 
-	case ZOAP_METHOD_PUT:
-		context.operation = LWM2M_OP_WRITE;
-		zoap_header_set_code(out.out_zpkt, ZOAP_RESPONSE_CODE_CHANGED);
+	case COAP_METHOD_PUT:
+		/* write attributes if content-format is absent */
+		if (format == LWM2M_FORMAT_NONE) {
+			context.operation = LWM2M_OP_WRITE_ATTR;
+		} else {
+			context.operation = LWM2M_OP_WRITE;
+		}
+
+		msg->code = COAP_RESPONSE_CODE_CHANGED;
 		break;
 
-	case ZOAP_METHOD_DELETE:
+	case COAP_METHOD_DELETE:
 		context.operation = LWM2M_OP_DELETE;
-		zoap_header_set_code(out.out_zpkt, ZOAP_RESPONSE_CODE_DELETED);
+		msg->code = COAP_RESPONSE_CODE_DELETED;
 		break;
 
 	default:
 		break;
 	}
 
-	/* set response token */
-	token = zoap_header_get_token(in.in_zpkt, &tkl);
-	if (tkl) {
-		zoap_header_set_token(out.out_zpkt, token, tkl);
-	}
-
-	in.inpos = 0;
-	in.inbuf = zoap_packet_get_payload(in.in_zpkt, &in.insize);
+	/* setup incoming data */
+	in.frag = coap_packet_get_payload(in.in_cpkt, &in.offset,
+					  &in.payload_len);
 
 	/* Check for block transfer */
-	r = get_option_int(in.in_zpkt, ZOAP_OPTION_BLOCK1);
+	r = get_option_int(in.in_cpkt, COAP_OPTION_BLOCK1);
 	if (r > 0) {
+		last_block = !GET_MORE(r);
+
 		/* RFC7252: 4.6. Message Size */
 		block_size = GET_BLOCK_SIZE(r);
-		if (GET_MORE(r) &&
-		    zoap_block_size_to_bytes(block_size) > in.insize) {
+		if (!last_block &&
+		    coap_block_size_to_bytes(block_size) > in.payload_len) {
 			SYS_LOG_DBG("Trailing payload is discarded!");
 			r = -EFBIG;
 			goto error;
@@ -2406,8 +3166,22 @@ static int handle_request(struct zoap_packet *request,
 			goto error;
 		}
 
-		/* 0 will be returned if it's the last block */
-		block_offset = zoap_next_block(in.in_zpkt, &block_ctx->ctx);
+		r = coap_update_from_block(in.in_cpkt, &block_ctx->ctx);
+		if (r < 0) {
+			SYS_LOG_ERR("Error from block update: %d", r);
+			goto error;
+		}
+
+		/* Handle blockwise 1 (Part 1): Set response code */
+		if (!last_block) {
+			msg->code = COAP_RESPONSE_CODE_CONTINUE;
+		}
+	}
+
+	/* render CoAP packet header */
+	r = lwm2m_init_message(msg);
+	if (r < 0) {
+		goto error;
 	}
 
 	switch (context.operation) {
@@ -2415,12 +3189,14 @@ static int handle_request(struct zoap_packet *request,
 	case LWM2M_OP_READ:
 		if (observe == 0) {
 			/* add new observer */
-			if (token) {
-				r = zoap_add_option_int(out.out_zpkt,
-							ZOAP_OPTION_OBSERVE, 1);
-				if (r) {
+			if (msg->token) {
+				r = coap_append_option_int(out.out_cpkt,
+							   COAP_OPTION_OBSERVE,
+							   1);
+				if (r < 0) {
 					SYS_LOG_ERR("OBSERVE option error: %d",
 						    r);
+					goto error;
 				}
 
 				r = engine_add_observer(msg, token, tkl, &path,
@@ -2432,8 +3208,6 @@ static int handle_request(struct zoap_packet *request,
 				SYS_LOG_ERR("OBSERVE request missing token");
 			}
 		} else if (observe == 1) {
-			/* use token from this request */
-			token = zoap_header_get_token(in.in_zpkt, &tkl);
 			/* remove observer */
 			r = engine_remove_observer(token, tkl);
 			if (r < 0) {
@@ -2441,19 +3215,11 @@ static int handle_request(struct zoap_packet *request,
 			}
 		}
 
-		/* set output content-format */
-		r = zoap_add_option_int(out.out_zpkt,
-					ZOAP_OPTION_CONTENT_FORMAT, accept);
-		if (r > 0) {
-			SYS_LOG_ERR("Error setting response content-format: %d",
-				    r);
-		}
-
-		r = do_read_op(obj, &context);
+		r = do_read_op(obj, &context, accept);
 		break;
 
 	case LWM2M_OP_DISCOVER:
-		r = do_discover_op(&context);
+		r = do_discover_op(&context, well_known);
 		break;
 
 	case LWM2M_OP_WRITE:
@@ -2475,27 +3241,24 @@ static int handle_request(struct zoap_packet *request,
 
 	default:
 		SYS_LOG_ERR("Unknown operation: %u", context.operation);
-		return -EINVAL;
+		r = -EINVAL;
 	}
 
-	if (r) {
+	if (r < 0) {
 		goto error;
 	}
 
-	/* Handle blockwise 1 */
+	/* Handle blockwise 1 (Part 2): Append BLOCK1 option / free context */
 	if (block_ctx) {
-		if (block_offset > 0) {
+		if (!last_block) {
 			/* More to come, ack with correspond block # */
-			r = zoap_add_block1_option(
-					out.out_zpkt, &block_ctx->ctx);
-			if (r) {
+			r = coap_append_block1_option(out.out_cpkt,
+						      &block_ctx->ctx);
+			if (r < 0) {
 				/* report as internal server error */
 				SYS_LOG_ERR("Fail adding block1 option: %d", r);
 				r = -EINVAL;
 				goto error;
-			} else {
-				zoap_header_set_code(out.out_zpkt,
-						ZOAP_RESPONSE_CODE_CONTINUE);
 			}
 		} else {
 			/* Free context when finished */
@@ -2503,32 +3266,32 @@ static int handle_request(struct zoap_packet *request,
 		}
 	}
 
-	if (out.outlen > 0) {
-		SYS_LOG_DBG("replying with %u bytes", out.outlen);
-		zoap_packet_set_used(out.out_zpkt, out.outlen);
-	} else {
-		SYS_LOG_DBG("no data in reply");
-	}
-
 	return 0;
 
 error:
+	lwm2m_reset_message(msg, false);
 	if (r == -ENOENT) {
-		zoap_header_set_code(out.out_zpkt,
-				     ZOAP_RESPONSE_CODE_NOT_FOUND);
+		msg->code = COAP_RESPONSE_CODE_NOT_FOUND;
 	} else if (r == -EPERM) {
-		zoap_header_set_code(out.out_zpkt,
-				     ZOAP_RESPONSE_CODE_NOT_ALLOWED);
+		msg->code = COAP_RESPONSE_CODE_NOT_ALLOWED;
 	} else if (r == -EEXIST) {
-		zoap_header_set_code(out.out_zpkt,
-				     ZOAP_RESPONSE_CODE_BAD_REQUEST);
+		msg->code = COAP_RESPONSE_CODE_BAD_REQUEST;
+	} else if (r == -EFAULT) {
+		msg->code = COAP_RESPONSE_CODE_INCOMPLETE;
 	} else if (r == -EFBIG) {
-		zoap_header_set_code(out.out_zpkt,
-				     ZOAP_RESPONSE_CODE_REQUEST_TOO_LARGE);
+		msg->code = COAP_RESPONSE_CODE_REQUEST_TOO_LARGE;
+	} else if (r == -ENOTSUP) {
+		msg->code = COAP_RESPONSE_CODE_NOT_IMPLEMENTED;
+	} else if (r == -ENOMSG) {
+		msg->code = COAP_RESPONSE_CODE_UNSUPPORTED_CONTENT_FORMAT;
 	} else {
 		/* Failed to handle the request */
-		zoap_header_set_code(out.out_zpkt,
-				     ZOAP_RESPONSE_CODE_INTERNAL_ERROR);
+		msg->code = COAP_RESPONSE_CODE_INTERNAL_ERROR;
+	}
+
+	r = lwm2m_init_message(msg);
+	if (r < 0) {
+		SYS_LOG_ERR("Error recreating message: %d", r);
 	}
 
 	/* Free block context when error happened */
@@ -2543,12 +3306,12 @@ void lwm2m_udp_receive(struct lwm2m_ctx *client_ctx, struct net_pkt *pkt,
 {
 	struct lwm2m_message *msg = NULL;
 	struct net_udp_hdr hdr, *udp_hdr;
-	struct zoap_pending *pending;
-	struct zoap_reply *reply;
-	struct zoap_packet response;
+	struct coap_pending *pending;
+	struct coap_reply *reply;
+	struct coap_packet response;
 	struct sockaddr from_addr;
-	int header_len, r;
-	const u8_t *token;
+	int r;
+	u8_t token[8];
 	u8_t tkl;
 
 	udp_hdr = net_udp_get_hdr(pkt, &hdr);
@@ -2576,26 +3339,19 @@ void lwm2m_udp_receive(struct lwm2m_ctx *client_ctx, struct net_pkt *pkt,
 	}
 #endif
 
-	/*
-	 * zoap expects that buffer->data starts at the
-	 * beginning of the CoAP header
-	 */
-	header_len = net_pkt_appdata(pkt) - pkt->frags->data;
-	net_buf_pull(pkt->frags, header_len);
-
-	r = zoap_packet_parse(&response, pkt);
+	r = coap_packet_parse(&response, pkt, NULL, 0);
 	if (r < 0) {
 		SYS_LOG_ERR("Invalid data received (err:%d)", r);
 		goto cleanup;
 	}
 
-	token = zoap_header_get_token(&response, &tkl);
-	pending = zoap_pending_received(&response, client_ctx->pendings,
+	tkl = coap_header_get_token(&response, token);
+	pending = coap_pending_received(&response, client_ctx->pendings,
 					CONFIG_LWM2M_ENGINE_MAX_PENDING);
 	/*
-	 * Clear pending pointer because zoap_pending_received() calls
-	 * zoap_pending_clear, and later when we call lwm2m_release_message()
-	 * it will try and call zoap_pending_clear() again if msg->pending
+	 * Clear pending pointer because coap_pending_received() calls
+	 * coap_pending_clear, and later when we call lwm2m_reset_message()
+	 * it will try and call coap_pending_clear() again if msg->pending
 	 * is != NULL.
 	 */
 	if (pending) {
@@ -2607,7 +3363,7 @@ void lwm2m_udp_receive(struct lwm2m_ctx *client_ctx, struct net_pkt *pkt,
 
 	SYS_LOG_DBG("checking for reply from [%s]",
 		    lwm2m_sprint_ip_addr(&from_addr));
-	reply = zoap_response_received(&response, &from_addr,
+	reply = coap_response_received(&response, &from_addr,
 				       client_ctx->replies,
 				       CONFIG_LWM2M_ENGINE_MAX_REPLIES);
 	if (reply) {
@@ -2622,7 +3378,7 @@ void lwm2m_udp_receive(struct lwm2m_ctx *client_ctx, struct net_pkt *pkt,
 		 * additional flag to decide when to clear the reply callback.
 		 */
 		if (handle_separate_response && !tkl &&
-			zoap_header_get_type(&response) == ZOAP_TYPE_ACK) {
+			coap_header_get_type(&response) == COAP_TYPE_ACK) {
 			SYS_LOG_DBG("separated response, not removing reply");
 			goto cleanup;
 		}
@@ -2635,7 +3391,7 @@ void lwm2m_udp_receive(struct lwm2m_ctx *client_ctx, struct net_pkt *pkt,
 	if (reply || pending) {
 		/* free up msg resources */
 		if (msg) {
-			lwm2m_release_message(msg);
+			lwm2m_reset_message(msg, true);
 		}
 
 		SYS_LOG_DBG("reply %p handled and removed", reply);
@@ -2648,7 +3404,7 @@ void lwm2m_udp_receive(struct lwm2m_ctx *client_ctx, struct net_pkt *pkt,
 	 * at registered objects to find a handler.
 	 */
 	if (udp_request_handler &&
-	    zoap_header_get_type(&response) == ZOAP_TYPE_CON) {
+	    coap_header_get_type(&response) == COAP_TYPE_CON) {
 		msg = lwm2m_get_message(client_ctx);
 		if (!msg) {
 			SYS_LOG_ERR("Unable to get a lwm2m message!");
@@ -2656,28 +3412,23 @@ void lwm2m_udp_receive(struct lwm2m_ctx *client_ctx, struct net_pkt *pkt,
 		}
 
 		/* Create a response message if we reach this point */
-		msg->type = ZOAP_TYPE_ACK;
-		msg->code = zoap_header_get_code(&response);
-		msg->mid = zoap_header_get_id(&response);
+		msg->type = COAP_TYPE_ACK;
+		msg->code = coap_header_get_code(&response);
+		msg->mid = coap_header_get_id(&response);
 		/* skip token generation by default */
 		msg->tkl = LWM2M_MSG_TOKEN_LEN_SKIP;
-
-		r = lwm2m_init_message(msg);
-		if (r < 0) {
-			goto cleanup;
-		}
 
 		/* process the response to this request */
 		r = udp_request_handler(&response, msg);
 		if (r < 0) {
-			SYS_LOG_ERR("Request handler error: %d", r);
-		} else {
-			r = lwm2m_send_message(msg);
-			if (r < 0) {
-				SYS_LOG_ERR("Err sending response: %d",
-					    r);
-				lwm2m_release_message(msg);
-			}
+			goto cleanup;
+		}
+
+		r = lwm2m_send_message(msg);
+		if (r < 0) {
+			SYS_LOG_ERR("Err sending response: %d",
+				    r);
+			lwm2m_reset_message(msg, true);
 		}
 	} else {
 		SYS_LOG_ERR("No handler for response");
@@ -2703,11 +3454,11 @@ static void retransmit_request(struct k_work *work)
 {
 	struct lwm2m_ctx *client_ctx;
 	struct lwm2m_message *msg;
-	struct zoap_pending *pending;
+	struct coap_pending *pending;
 	int r;
 
 	client_ctx = CONTAINER_OF(work, struct lwm2m_ctx, retransmit_work);
-	pending = zoap_pending_next_to_expire(client_ctx->pendings,
+	pending = coap_pending_next_to_expire(client_ctx->pendings,
 					      CONFIG_LWM2M_ENGINE_MAX_PENDING);
 	if (!pending) {
 		return;
@@ -2719,45 +3470,64 @@ static void retransmit_request(struct k_work *work)
 		return;
 	}
 
-	if (!zoap_pending_cycle(pending)) {
+	/* ref pkt to avoid being freed after net_app_send_pkt() */
+	net_pkt_ref(pending->pkt);
+
+	SYS_LOG_DBG("Resending message: %p", msg);
+	msg->send_attempts++;
+	/*
+	 * Don't use lwm2m_send_message() because it calls
+	 * coap_pending_cycle() / coap_pending_cycle() in a different order
+	 * and under different circumstances.  It also does it's own ref /
+	 * unref of the net_pkt.  Keep it simple and call net_app_send_pkt()
+	 * directly here.
+	 */
+	r = net_app_send_pkt(&msg->ctx->net_app_ctx, msg->cpkt.pkt,
+			     &msg->ctx->net_app_ctx.default_ctx->remote,
+			     NET_SOCKADDR_MAX_SIZE, K_NO_WAIT, NULL);
+	if (r < 0) {
+		SYS_LOG_ERR("Error sending lwm2m message: %d", r);
+		/* don't error here, retry until timeout */
+		net_pkt_unref(pending->pkt);
+	}
+
+	if (!coap_pending_cycle(pending)) {
 		/* pending request has expired */
 		if (msg->message_timeout_cb) {
 			msg->message_timeout_cb(msg);
 		}
 
-		/* final unref to release pkt */
-		net_pkt_unref(pending->pkt);
-		lwm2m_release_message(msg);
+		/*
+		 * coap_pending_clear() is called in lwm2m_reset_message()
+		 * which balances the ref we made in coap_pending_cycle()
+		 */
+		lwm2m_reset_message(msg, true);
 		return;
 	}
 
-	r = lwm2m_send_message(msg);
-	if (r < 0) {
-		SYS_LOG_ERR("Error sending lwm2m message: %d", r);
-		/* don't error here, retry until timeout */
-	}
-
+	/* unref to balance ref we made for sendto() */
+	net_pkt_unref(pending->pkt);
 	k_delayed_work_submit(&client_ctx->retransmit_work, pending->timeout);
 }
 
-static int notify_message_reply_cb(const struct zoap_packet *response,
-				   struct zoap_reply *reply,
+static int notify_message_reply_cb(const struct coap_packet *response,
+				   struct coap_reply *reply,
 				   const struct sockaddr *from)
 {
 	int ret = 0;
 	u8_t type, code;
 
-	type = zoap_header_get_type(response);
-	code = zoap_header_get_code(response);
+	type = coap_header_get_type(response);
+	code = coap_header_get_code(response);
 
 	SYS_LOG_DBG("NOTIFY ACK type:%u code:%d.%d reply_token:'%s'",
 		type,
-		ZOAP_RESPONSE_CODE_CLASS(code),
-		ZOAP_RESPONSE_CODE_DETAIL(code),
+		COAP_RESPONSE_CODE_CLASS(code),
+		COAP_RESPONSE_CODE_DETAIL(code),
 		sprint_token(reply->token, reply->tkl));
 
-	/* remove observer on ZOAP_TYPE_RESET */
-	if (type == ZOAP_TYPE_RESET) {
+	/* remove observer on COAP_TYPE_RESET */
+	if (type == COAP_TYPE_RESET) {
 		if (reply->tkl > 0) {
 			ret = engine_remove_observer(reply->token, reply->tkl);
 			if (ret) {
@@ -2821,24 +3591,25 @@ static int generate_notify_message(struct observe_node *obs,
 		return -ENOMEM;
 	}
 
-	out.out_zpkt = &msg->zpkt;
-	msg->type = ZOAP_TYPE_CON;
-	msg->code = ZOAP_RESPONSE_CODE_CONTENT;
+	msg->type = COAP_TYPE_CON;
+	msg->code = COAP_RESPONSE_CODE_CONTENT;
 	msg->mid = 0;
 	msg->token = obs->token;
 	msg->tkl = obs->tkl;
 	msg->reply_cb = notify_message_reply_cb;
+	out.out_cpkt = &msg->cpkt;
 
 	ret = lwm2m_init_message(msg);
-	if (ret) {
-		return ret;
+	if (ret < 0) {
+		SYS_LOG_ERR("Unable to init lwm2m message! (err: %d)", ret);
+		goto cleanup;
 	}
 
 	/* each notification should increment the obs counter */
 	obs->counter++;
-	ret = zoap_add_option_int(out.out_zpkt, ZOAP_OPTION_OBSERVE,
-				  obs->counter);
-	if (ret) {
+	ret = coap_append_option_int(&msg->cpkt, COAP_OPTION_OBSERVE,
+				     obs->counter);
+	if (ret < 0) {
 		SYS_LOG_ERR("OBSERVE option error: %d", ret);
 		goto cleanup;
 	}
@@ -2846,22 +3617,8 @@ static int generate_notify_message(struct observe_node *obs,
 	/* set the output writer */
 	select_writer(&out, obs->format);
 
-	/* set response content-format */
-	ret = zoap_add_option_int(out.out_zpkt, ZOAP_OPTION_CONTENT_FORMAT,
-				  obs->format);
-	if (ret > 0) {
-		SYS_LOG_ERR("error setting content-format (err:%d)", ret);
-		goto cleanup;
-	}
-
-	ret = do_read_op(obj_inst->obj, &context);
-	if (ret == 0) {
-		if (out.outlen > 0) {
-			zoap_packet_set_used(out.out_zpkt, out.outlen);
-		} else {
-			SYS_LOG_DBG("no data in reply");
-		}
-	} else {
+	ret = do_read_op(obj_inst->obj, &context, obs->format);
+	if (ret < 0) {
 		SYS_LOG_ERR("error in multi-format read (err:%d)", ret);
 		goto cleanup;
 	}
@@ -2876,15 +3633,70 @@ static int generate_notify_message(struct observe_node *obs,
 	return 0;
 
 cleanup:
-	lwm2m_release_message(msg);
+	lwm2m_reset_message(msg, true);
 	return ret;
+}
+
+s32_t engine_next_service_timeout_ms(u32_t max_timeout)
+{
+	struct service_node *srv;
+	u64_t time_left_ms, timestamp = k_uptime_get();
+	u32_t timeout = max_timeout;
+
+	SYS_SLIST_FOR_EACH_CONTAINER(&engine_service_list, srv, node) {
+		if (!srv->service_fn) {
+			continue;
+		}
+
+		time_left_ms = srv->last_timestamp +
+				  K_MSEC(srv->min_call_period);
+
+		/* service is due */
+		if (time_left_ms < timestamp) {
+			return 0;
+		}
+
+		/* service timeout is less than the current timeout */
+		time_left_ms -= timestamp;
+		if (time_left_ms < timeout) {
+			timeout = time_left_ms;
+		}
+	}
+
+	return timeout;
+}
+
+int lwm2m_engine_add_service(void (*service)(void), u32_t period_ms)
+{
+	int i;
+
+	/* find an unused service index node */
+	for (i = 0; i < MAX_PERIODIC_SERVICE; i++) {
+		if (!service_node_data[i].service_fn) {
+			break;
+		}
+	}
+
+	if (i == MAX_PERIODIC_SERVICE) {
+		return -ENOMEM;
+	}
+
+	service_node_data[i].service_fn = service;
+	service_node_data[i].min_call_period = period_ms;
+	service_node_data[i].last_timestamp = 0;
+
+	sys_slist_append(&engine_service_list,
+			 &service_node_data[i].node);
+
+	return 0;
 }
 
 /* TODO: this needs to be triggered via work_queue */
 static void lwm2m_engine_service(void)
 {
 	struct observe_node *obs;
-	s64_t timestamp;
+	struct service_node *srv;
+	s64_t timestamp, service_due_timestamp;
 
 	while (true) {
 		/*
@@ -2918,7 +3730,23 @@ static void lwm2m_engine_service(void)
 
 		}
 
-		k_sleep(K_MSEC(ENGINE_UPDATE_INTERVAL));
+		timestamp = k_uptime_get();
+		SYS_SLIST_FOR_EACH_CONTAINER(&engine_service_list, srv, node) {
+			if (!srv->service_fn) {
+				continue;
+			}
+
+			service_due_timestamp = srv->last_timestamp +
+						K_MSEC(srv->min_call_period);
+			/* service is due */
+			if (timestamp > service_due_timestamp) {
+				srv->last_timestamp = k_uptime_get();
+				srv->service_fn();
+			}
+		}
+
+		/* calculate how long to sleep till the next service */
+		k_sleep(engine_next_service_timeout_ms(ENGINE_UPDATE_INTERVAL));
 	}
 }
 
@@ -2943,6 +3771,25 @@ void lwm2m_engine_context_init(struct lwm2m_ctx *client_ctx)
 				 client_ctx->tx_slab, client_ctx->data_pool);
 #endif
 }
+
+#if defined(CONFIG_NET_APP_DTLS)
+static int setup_cert(struct net_app_ctx *app_ctx, void *cert)
+{
+#if defined(MBEDTLS_KEY_EXCHANGE__SOME__PSK_ENABLED)
+	struct lwm2m_ctx *client_ctx = CONTAINER_OF(app_ctx,
+						    struct lwm2m_ctx,
+						    net_app_ctx);
+	return mbedtls_ssl_conf_psk(
+			&app_ctx->tls.mbedtls.conf,
+			(const unsigned char *)client_ctx->client_psk,
+			client_ctx->client_psk_len,
+			(const unsigned char *)client_ctx->client_psk_id,
+			client_ctx->client_psk_id_len);
+#else
+	return 0;
+#endif
+}
+#endif /* CONFIG_NET_APP_DTLS */
 
 int lwm2m_engine_start(struct lwm2m_ctx *client_ctx,
 		       char *peer_str, u16_t peer_port)
@@ -2970,6 +3817,24 @@ int lwm2m_engine_start(struct lwm2m_ctx *client_ctx,
 		SYS_LOG_ERR("Could not set receive callback (err:%d)", ret);
 		goto error_start;
 	}
+
+#if defined(CONFIG_NET_APP_DTLS)
+	ret = net_app_client_tls(&client_ctx->net_app_ctx,
+				 client_ctx->dtls_result_buf,
+				 client_ctx->dtls_result_buf_len,
+				 INSTANCE_INFO,
+				 strlen(INSTANCE_INFO),
+				 setup_cert,
+				 client_ctx->cert_host,
+				 NULL,
+				 client_ctx->dtls_pool,
+				 client_ctx->dtls_stack,
+				 client_ctx->dtls_stack_len);
+	if (ret < 0) {
+		SYS_LOG_ERR("Cannot init DTLS (%d)", ret);
+		goto error_start;
+	}
+#endif
 
 	ret = net_app_connect(&client_ctx->net_app_ctx,
 			      client_ctx->net_timeout);

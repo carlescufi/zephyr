@@ -66,7 +66,7 @@
 #endif
 #include <usb/usb_device.h>
 
-#define SYS_LOG_LEVEL CONFIG_SYS_LOG_USB_LEVEL
+#define SYS_LOG_LEVEL CONFIG_SYS_LOG_USB_DEVICE_LEVEL
 #define SYS_LOG_NO_NEWLINE
 #include <logging/sys_log.h>
 
@@ -553,7 +553,7 @@ static bool usb_handle_std_device_req(struct usb_setup_packet *setup,
 		break;
 
 	case REQ_SET_ADDRESS:
-		SYS_LOG_DBG("REQ_SET_ADDRESS\n");
+		SYS_LOG_DBG("REQ_SET_ADDRESS, addr 0x%x\n", setup->wValue);
 		usb_dc_set_address(setup->wValue);
 		break;
 
@@ -571,7 +571,8 @@ static bool usb_handle_std_device_req(struct usb_setup_packet *setup,
 		break;
 
 	case REQ_SET_CONFIGURATION:
-		SYS_LOG_DBG("REQ_SET_CONFIGURATION\n");
+		SYS_LOG_DBG("REQ_SET_CONFIGURATION, conf 0x%x\n",
+			    setup->wValue & 0xFF);
 		if (!usb_set_configuration(setup->wValue & 0xFF, 0)) {
 			SYS_LOG_DBG("USBSetConfiguration failed!\n");
 			ret = false;
@@ -730,10 +731,12 @@ static int usb_handle_standard_request(struct usb_setup_packet *setup,
 		s32_t *len, u8_t **data_buf)
 {
 	int rc = 0;
+
 	/* try the custom request handler first */
-	if ((usb_dev.custom_req_handler != NULL) &&
-		(!usb_dev.custom_req_handler(setup, len, data_buf)))
+	if (usb_dev.custom_req_handler &&
+	    !usb_dev.custom_req_handler(setup, len, data_buf)) {
 		return 0;
+	}
 
 	switch (REQTYPE_GET_RECIP(setup->bmRequestType)) {
 	case REQTYPE_RECIP_DEVICE:

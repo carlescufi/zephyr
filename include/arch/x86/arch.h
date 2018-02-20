@@ -350,12 +350,6 @@ struct _x86_syscall_stack_frame {
  */
 
 typedef struct nanoIsf {
-#ifdef CONFIG_DEBUG_INFO
-	unsigned int esp;
-	unsigned int ebp;
-	unsigned int ebx;
-	unsigned int esi;
-#endif /* CONFIG_DEBUG_INFO */
 	unsigned int edi;
 	unsigned int ecx;
 	unsigned int edx;
@@ -394,8 +388,8 @@ typedef struct nanoIsf {
 /**
  * @brief Disable all interrupts on the CPU (inline)
  *
- * This routine disables interrupts.  It can be called from either interrupt,
- * task or fiber level.  This routine returns an architecture-dependent
+ * This routine disables interrupts.  It can be called from either interrupt
+ * or thread level.  This routine returns an architecture-dependent
  * lock-out key representing the "interrupt disable state" prior to the call;
  * this key can be passed to irq_unlock() to re-enable interrupts.
  *
@@ -413,7 +407,7 @@ typedef struct nanoIsf {
  * thread executes, or while the system is idle.
  *
  * The "interrupt disable state" is an attribute of a thread.  Thus, if a
- * fiber or task disables interrupts and subsequently invokes a kernel
+ * thread disables interrupts and subsequently invokes a kernel
  * routine that causes the calling thread to block, the interrupt
  * disable state will be restored when the thread is later rescheduled
  * for execution.
@@ -441,7 +435,7 @@ static ALWAYS_INLINE unsigned int _arch_irq_lock(void)
  * is an architecture-dependent lock-out key that is returned by a previous
  * invocation of irq_lock().
  *
- * This routine can be called from either interrupt, task or fiber level.
+ * This routine can be called from either interrupt or thread level.
  *
  * @return N/A
  *
@@ -481,6 +475,9 @@ extern void	_arch_irq_disable(unsigned int irq);
  * @ingroup kernel_apis
  * @{
  */
+
+struct k_thread;
+typedef struct k_thread *k_tid_t;
 
 /**
  * @brief Enable preservation of floating point context information.
@@ -549,10 +546,11 @@ extern FUNC_NORETURN void _SysFatalErrorHandler(unsigned int reason,
 						const NANO_ESF * pEsf);
 
 
-#ifdef CONFIG_X86_STACK_PROTECTION
+#ifdef CONFIG_X86_ENABLE_TSS
 extern struct task_state_segment _main_tss;
+#endif
 
-#ifdef CONFIG_X86_USERSPACE
+#ifdef CONFIG_USERSPACE
 /* Syscall invocation macros. x86-specific machine constraints used to ensure
  * args land in the proper registers, see implementation of
  * _x86_syscall_entry_stub in userspace.S
@@ -577,7 +575,7 @@ static inline u32_t _arch_syscall_invoke6(u32_t arg1, u32_t arg2, u32_t arg3,
 			 : "S" (call_id), "a" (arg1), "d" (arg2),
 			   "c" (arg3), "b" (arg4), "D" (arg5),
 			   [arg6] "m" (arg6)
-			 : "memory");
+			 : "memory", "esp");
 	return ret;
 }
 
@@ -685,8 +683,12 @@ static inline int _arch_is_user_context(void)
 
 	return cs == USER_CODE_SEG;
 }
+#endif /* CONFIG_USERSPACE */
 
-/* With userspace enabled, stacks are arranged as follows:
+
+#if defined(CONFIG_HW_STACK_PROTECTION) && defined(CONFIG_USERSPACE)
+/* With both hardware stack protection and userspace enabled, stacks are
+ * arranged as follows:
  *
  * High memory addresses
  * +---------------+
@@ -708,14 +710,18 @@ static inline int _arch_is_user_context(void)
  * All context switches will save/restore the esp0 field in the TSS.
  */
 #define _STACK_GUARD_SIZE	(MMU_PAGE_SIZE * 2)
-#else /* !CONFIG_X86_USERSPACE */
-#define _STACK_GUARD_SIZE	MMU_PAGE_SIZE
-#endif /* CONFIG_X86_USERSPACE */
 #define _STACK_BASE_ALIGN	MMU_PAGE_SIZE
-#else /* !CONFIG_X86_STACK_PROTECTION */
+#elif defined(CONFIG_HW_STACK_PROTECTION) || defined(CONFIG_USERSPACE)
+/* If only one of HW stack protection or userspace is enabled, then the
+ * stack will be preceded by one page which is a guard page or a kernel mode
+ * stack, respectively.
+ */
+#define _STACK_GUARD_SIZE	MMU_PAGE_SIZE
+#define _STACK_BASE_ALIGN	MMU_PAGE_SIZE
+#else /* Neither feature */
 #define _STACK_GUARD_SIZE	0
 #define _STACK_BASE_ALIGN	STACK_ALIGN
-#endif /* CONFIG_X86_STACK_PROTECTION */
+#endif
 
 #define _ARCH_THREAD_STACK_DEFINE(sym, size) \
 	struct _k_thread_stack_element __kernel_noinit \
@@ -754,11 +760,18 @@ static inline int _arch_is_user_context(void)
 extern const NANO_ESF _default_esf;
 
 #ifdef CONFIG_X86_MMU
-/* Linker variable. It needed to access the start of the Page directory */
-extern u32_t __mmu_tables_start;
+/* Linker variable. It is needed to access the start of the Page directory */
 
+
+#ifdef CONFIG_X86_PAE_MODE
+extern u64_t __mmu_tables_start;
+#define X86_MMU_PDPT ((struct x86_mmu_page_directory_pointer *)\
+		      (u32_t *)(void *)&__mmu_tables_start)
+#else
+extern u32_t __mmu_tables_start;
 #define X86_MMU_PD ((struct x86_mmu_page_directory *)\
 		    (void *)&__mmu_tables_start)
+#endif
 
 
 /**
@@ -771,7 +784,9 @@ extern u32_t __mmu_tables_start;
  * @param pde_flags Output parameter for page directory entry flags
  * @param pte_flags Output parameter for page table entry flags
  */
-void _x86_mmu_get_flags(void *addr, u32_t *pde_flags, u32_t *pte_flags);
+void _x86_mmu_get_flags(void *addr,
+			x86_page_entry_data_t *pde_flags,
+			x86_page_entry_data_t *pte_flags);
 
 
 /**
@@ -782,11 +797,16 @@ void _x86_mmu_get_flags(void *addr, u32_t *pde_flags, u32_t *pte_flags);
  *
  * @param ptr Starting memory address which must be page-aligned
  * @param size Size of the region, must be page size multiple
- * @flags Value of bits to set in the page table entries
- * @mask Mask indicating which particular bits in the page table entries to
+ * @param flags Value of bits to set in the page table entries
+ * @param mask Mask indicating which particular bits in the page table entries to
  *	 modify
  */
-void _x86_mmu_set_flags(void *ptr, size_t size, u32_t flags, u32_t mask);
+
+void _x86_mmu_set_flags(void *ptr,
+			size_t size,
+			x86_page_entry_data_t flags,
+			x86_page_entry_data_t mask);
+
 #endif /* CONFIG_X86_MMU */
 
 #endif /* !_ASMLANGUAGE */

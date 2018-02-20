@@ -28,8 +28,7 @@
 /* Some configurations require that the stack/registers be adjusted before
  * _thread_entry. See discussion in swap.S for _x86_thread_entry_wrapper()
  */
-#if defined(CONFIG_GDB_INFO) || defined(CONFIG_DEBUG_INFO) || \
-	defined(CONFIG_X86_IAMCU)
+#if defined(CONFIG_X86_IAMCU)
 #define WRAPPER_REQUIRED
 #endif
 
@@ -135,9 +134,9 @@ void _new_thread(struct k_thread *thread, k_thread_stack_t *stack,
 	 */
 	thread->callee_saved.esp = (unsigned long)initial_frame;
 
-#if (defined(CONFIG_FP_SHARING) || defined(CONFIG_GDB_INFO))
+#if defined(CONFIG_FP_SHARING)
 	thread->arch.excNestCount = 0;
-#endif /* CONFIG_FP_SHARING || CONFIG_GDB_INFO */
+#endif /* CONFIG_FP_SHARING */
 #ifdef CONFIG_THREAD_MONITOR
 	thread->entry = (struct __thread_entry *)&initial_frame->entry;
 	thread_monitor_init(thread);
@@ -164,9 +163,18 @@ void _x86_swap_update_page_tables(struct k_thread *incoming,
 	 */
 	_main_tss.esp0 = incoming->stack_info.start;
 
-	/* TODO: if either thread defines different memory domains, efficiently
+	/* If either thread defines different memory domains, efficiently
 	 * switch between them
 	 */
+	if (incoming->mem_domain_info.mem_domain !=
+	   outgoing->mem_domain_info.mem_domain){
+
+		 /* Ensure that the outgoing mem domain configuration
+		  * is set back to default state.
+		  */
+		_arch_mem_domain_destroy(outgoing->mem_domain_info.mem_domain);
+		_arch_mem_domain_configure(incoming);
+	}
 }
 
 

@@ -119,8 +119,10 @@ The three major security measures currently implemented are:
    the near future.
 
 -  **Execution Protection** including thread separation, stack and
-   memory protection is currently not available in the upstream
-   Zephyr RTOS but is planned for future releases.
+   memory protection is currently available in the upstream
+   Zephyr RTOS starting with version 1.9.0 (stack protection).  Memory
+   protection and thread separation was added in version 1.10.0 for X86.
+   ARM and ARC support is targeted for version 1.11.0.
 
 These topics are discussed in more detail in the following subsections.
 
@@ -149,7 +151,7 @@ Zephyr kernel and all applications are compiled into a single static
 binary. System calls are implemented as function calls without requiring
 context switches. Static linking eliminates the potential for
 dynamically loading malicious code. Memory protection and task
-separation techniques are in scope for future releases.
+separation techniques are in scope starting with version 1.10.0.
 
 Quality Assurance
 =================
@@ -309,7 +311,7 @@ security violations and limit their impact:
    [PAUL09]_.
 
 -  **Least privilege** describes an access model in which each user,
-   program, thread, and fiber shall have the smallest possible
+   program and thread shall have the smallest possible
    subset of permissions in the system required to perform their
    task. This positive security model aims to minimize the attack
    surface of the system.
@@ -589,10 +591,10 @@ following is the current proposal:
    the reporter.
 
 -  All security relevant issues shall trigger an automated notification
-   on the Zephyr security mailing list (security@lists.zephyrproject.org).
-   Any member of the
-   security board can then triage the severity of the issue
-   according to the `Common Vulnerability Scoring System v3.0 <CVSS_>`_
+   on the Zephyr security mailing list
+   (vulnerabilities@zephyrproject.org).  Any member of the security
+   board can then triage the severity of the issue according to the
+   `Common Vulnerability Scoring System v3.0 <CVSS_>`_
 
 -  Depending on the resulting severity score of the issue, the issue is
    prioritized and assigned to the owner of the affected module.

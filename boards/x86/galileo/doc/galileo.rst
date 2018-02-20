@@ -190,12 +190,13 @@ Use the following procedures for booting an image on a Galileo board.
 * `Booting the Galileo Board`_
 
 
+.. _grub2:
+
 Creating a GRUB2 Boot Loader Image from a Linux Host
 ====================================================
 
-If you are having problems running an application using the default GRUB
-of the hardware, follow these steps to test on Galileo2 boards using a custom
-GRUB.
+If you are having problems running an application using the preinstalled
+copy of GRUB, follow these steps to test on supported boards using a custom GRUB.
 
 #. Install the requirements to build GRUB on your host machine.
 
@@ -217,10 +218,10 @@ GRUB.
    .. code-block:: console
 
      $ cd $ZEPHYR_BASE
-     $ ./boards/x86/galileo/support/build_grub.sh
+     $ ./boards/x86/common/scripts/build_grub.sh
 
 #. Find the binary at
-   :file:`$ZEPHYR_BASE/./boards/x86/galileo/support/grub/bin/grub.efi`.
+   :file:`$ZEPHYR_BASE/boards/x86/common/scripts/grub/bin/grub.efi`.
 
 
 
@@ -232,18 +233,19 @@ application image on a Galileo board. The following instructions apply to both
 devices.
 
 
-#. Set the board configuration to Galileo by changing the
-   :command:`make` command that is executed in the app directory
-   (e.g. :file:`$ZEPHYR_BASE/samples/hello_world`) to:
+#. Build a Zephyr application; for instance, to build the ``hello_world``
+   application on Galileo:
 
-   .. code-block:: console
-
-      $ make BOARD=galileo
+   .. zephyr-app-commands::
+      :zephyr-app: samples/hello_world
+      :board: galileo
+      :goals: build
 
    .. note::
-      A stripped project image file named :file:`zephyr.strip` is
-      automatically created when the project is built. This image has
-      removed debug information from the :file:`zephyr.elf` file.
+
+      A stripped project image file named :file:`zephyr.strip` is automatically
+      created in the build directory after the application is built. This image
+      has removed debug information from the :file:`zephyr.elf` file.
 
 #. Use one of these cables for serial output:
 
@@ -277,9 +279,8 @@ devices.
 Booting the Galileo Board
 =========================
 
-Boot the Galileo board from the boot device using GRUB2
-with the firmware present in the on-board flash.
-
+Boot the Galileo board from the boot device using GRUB2 with the firmware
+present in the on-board flash.
 
 Steps
 -----

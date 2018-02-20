@@ -44,10 +44,10 @@ static struct net_context *v4_ctx;
 static struct net_context *reply_v4_ctx;
 
 static struct sockaddr_in6 any_addr6;
-static const struct in6_addr in6addr_any = IN6ADDR_ANY_INIT;
+static const struct in6_addr sin6_addr_any = IN6ADDR_ANY_INIT;
 
 static struct sockaddr_in any_addr4;
-static const struct in_addr in4addr_any = { { { 0 } } };
+static const struct in_addr sin_addr_any = INADDR_ANY_INIT;
 
 static struct in6_addr my_v6_inaddr = { { { 0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0,
 					  0, 0, 0, 0, 0, 0, 0, 0x2a } } };
@@ -145,8 +145,8 @@ static void v6_send_syn_ack(struct net_if *iface, struct net_pkt *req)
 	DBG("rsp dst %s/%d\n", net_sprint_ipv6_addr(&NET_IPV6_HDR(rsp)->dst),
 	    ntohs(NET_TCP_HDR(rsp)->dst_port));
 
-	net_hexdump_frags("request TCPv6", req);
-	net_hexdump_frags("reply   TCPv6", rsp);
+	net_hexdump_frags("request TCPv6", req, false);
+	net_hexdump_frags("reply   TCPv6", rsp, false);
 
 	ret =  net_recv_data(iface, rsp);
 	if (!ret) {
@@ -941,7 +941,7 @@ static bool test_create_v6_reset_packet(void)
 		return false;
 	}
 
-	net_hexdump_frags("TCPv6", pkt);
+	net_hexdump_frags("TCPv6", pkt, false);
 
 	tcp_hdr = net_tcp_get_hdr(pkt, &hdr);
 	if (!tcp_hdr) {
@@ -978,7 +978,7 @@ static bool test_create_v4_reset_packet(void)
 		return false;
 	}
 
-	net_hexdump_frags("TCPv4", pkt);
+	net_hexdump_frags("TCPv4", pkt, false);
 
 	tcp_hdr = net_tcp_get_hdr(pkt, &hdr);
 	if (!tcp_hdr) {
@@ -1015,7 +1015,7 @@ static bool test_create_v6_syn_packet(void)
 		return false;
 	}
 
-	net_hexdump_frags("TCPv6", pkt);
+	net_hexdump_frags("TCPv6", pkt, false);
 
 	tcp_hdr = net_tcp_get_hdr(pkt, &hdr);
 	if (!tcp_hdr) {
@@ -1052,7 +1052,7 @@ static bool test_create_v4_syn_packet(void)
 		return false;
 	}
 
-	net_hexdump_frags("TCPv4", pkt);
+	net_hexdump_frags("TCPv4", pkt, false);
 
 	tcp_hdr = net_tcp_get_hdr(pkt, &hdr);
 	if (!tcp_hdr) {
@@ -1089,7 +1089,7 @@ static bool test_create_v6_synack_packet(void)
 		return false;
 	}
 
-	net_hexdump_frags("TCPv6", pkt);
+	net_hexdump_frags("TCPv6", pkt, false);
 
 	tcp_hdr = net_tcp_get_hdr(pkt, &hdr);
 	if (!tcp_hdr) {
@@ -1127,7 +1127,7 @@ static bool test_create_v4_synack_packet(void)
 		return false;
 	}
 
-	net_hexdump_frags("TCPv4", pkt);
+	net_hexdump_frags("TCPv4", pkt, false);
 
 	tcp_hdr = net_tcp_get_hdr(pkt, &hdr);
 	if (!tcp_hdr) {
@@ -1165,7 +1165,7 @@ static bool test_create_v6_fin_packet(void)
 		return false;
 	}
 
-	net_hexdump_frags("TCPv6", pkt);
+	net_hexdump_frags("TCPv6", pkt, false);
 
 	tcp_hdr = net_tcp_get_hdr(pkt, &hdr);
 	if (!tcp_hdr) {
@@ -1202,7 +1202,7 @@ static bool test_create_v4_fin_packet(void)
 		return false;
 	}
 
-	net_hexdump_frags("TCPv4", pkt);
+	net_hexdump_frags("TCPv4", pkt, false);
 
 	tcp_hdr = net_tcp_get_hdr(pkt, &hdr);
 	if (!tcp_hdr) {
@@ -1239,15 +1239,15 @@ static bool test_v6_seq_check(void)
 		return false;
 	}
 
-	net_hexdump_frags("TCPv6", pkt);
+	net_hexdump_frags("TCPv6", pkt, false);
 
 	seq = NET_TCP_HDR(pkt)->seq[0] << 24 |
 		NET_TCP_HDR(pkt)->seq[1] << 16 |
 		NET_TCP_HDR(pkt)->seq[2] << 8 |
 		NET_TCP_HDR(pkt)->seq[3];
-	if (seq != (tcp->send_seq - 1)) {
+	if (seq != tcp->send_seq) {
 		DBG("Seq does not match (%u vs %u)\n",
-		    seq + 1, tcp->send_seq);
+		    seq, tcp->send_seq);
 		return false;
 	}
 
@@ -1271,15 +1271,15 @@ static bool test_v4_seq_check(void)
 		return false;
 	}
 
-	net_hexdump_frags("TCPv4", pkt);
+	net_hexdump_frags("TCPv4", pkt, false);
 
 	seq = NET_TCP_HDR(pkt)->seq[0] << 24 |
 		NET_TCP_HDR(pkt)->seq[1] << 16 |
 		NET_TCP_HDR(pkt)->seq[2] << 8 |
 		NET_TCP_HDR(pkt)->seq[3];
-	if (seq != (tcp->send_seq - 1)) {
+	if (seq != tcp->send_seq) {
 		DBG("Seq does not match (%u vs %u)\n",
-		    seq + 1, tcp->send_seq);
+		    seq, tcp->send_seq);
 		return false;
 	}
 
@@ -1698,10 +1698,10 @@ static bool test_init(void)
 		return false;
 	}
 
-	net_ipaddr_copy(&any_addr6.sin6_addr, &in6addr_any);
+	net_ipaddr_copy(&any_addr6.sin6_addr, &sin6_addr_any);
 	any_addr6.sin6_family = AF_INET6;
 
-	net_ipaddr_copy(&any_addr4.sin_addr, &in4addr_any);
+	net_ipaddr_copy(&any_addr4.sin_addr, &sin_addr_any);
 	any_addr4.sin_family = AF_INET;
 
 	k_sem_init(&wait_connect, 0, UINT_MAX);

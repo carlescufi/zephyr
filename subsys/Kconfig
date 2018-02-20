@@ -26,3 +26,7 @@ source "subsys/shell/Kconfig"
 source "subsys/usb/Kconfig"
 
 source "subsys/dfu/Kconfig"
+
+source "subsys/random/Kconfig"
+
+source "subsys/storage/Kconfig"

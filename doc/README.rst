@@ -55,7 +55,7 @@ Our documentation processing has been tested to run with:
 Begin by cloning a copy of the git repository for the zephyr project and
 setting up your development environment as described in :ref:`getting_started`
 or specifically for Ubuntu in :ref:`installation_linux`.  (Be sure to
-export the environment variables ``ZEPHYR_GCC_VARIANT`` and
+export the environment variables ``ZEPHYR_TOOLCHAIN_VARIANT`` and
 ``ZEPHYR_SDK_INSTALL_DIR`` as documented there.)
 
 Other than ``doxygen``, the documentation tools should be installed using ``pip``.
@@ -100,6 +100,7 @@ commands to generate the html content locally:
 
    $ cd ~/zephyr
    $ source zephyr-env.sh
+   $ cd doc
    $ make htmldocs
 
 Depending on your development system, it will take about 15 minutes to

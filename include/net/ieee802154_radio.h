@@ -14,6 +14,7 @@
 
 #include <device.h>
 #include <net/net_if.h>
+#include <net/ieee802154.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -31,6 +32,7 @@ enum ieee802154_hw_caps {
 	IEEE802154_HW_CSMA	= BIT(3), /* CSMA-CA supported */
 	IEEE802154_HW_2_4_GHZ	= BIT(4), /* 2.4Ghz radio supported */
 	IEEE802154_HW_TX_RX_ACK = BIT(5), /* Handles ACK request on TX */
+	IEEE802154_HW_SUB_GHZ	= BIT(6), /* Sub-GHz radio supported */
 };
 
 enum ieee802154_filter_type {
@@ -85,7 +87,23 @@ struct ieee802154_radio_api {
 
 	/** Stop the device */
 	int (*stop)(struct device *dev);
+
+#ifdef CONFIG_NET_L2_IEEE802154_SUB_GHZ
+	/** Get the available amount of Sub-GHz channels */
+	u16_t (*get_subg_channel_count)(struct device *dev);
+#endif /* CONFIG_NET_L2_IEEE802154_SUB_GHZ */
 } __packed;
+
+/**
+ * @brief Check if AR flag is set on the frame inside given net_pkt
+ *
+ * @param pkt A valid pointer on a net_pkt structure, must not be NULL.
+ *
+ * @return True if AR flag is set, False otherwise
+ */
+bool ieee802154_is_ar_flag_set(struct net_pkt *pkt);
+
+#ifndef CONFIG_IEEE802154_RAW_MODE
 
 /**
  * @brief Radio driver sending function that hw drivers should use
@@ -122,15 +140,23 @@ extern enum net_verdict ieee802154_radio_handle_ack(struct net_if *iface,
  */
 void ieee802154_init(struct net_if *iface);
 
-/**
- * @brief Check if AR flag is set on the frame inside given net_pkt
- *
- * @param pkt A valid pointer on a net_pkt structure, must not be NULL.
- *
- * @return True if AR flag is set, False otherwise
- */
-bool ieee802154_is_ar_flag_set(struct net_pkt *pkt);
+#else /* CONFIG_IEEE802154_RAW_MODE */
 
+static inline int ieee802154_radio_send(struct net_if *iface,
+					struct net_pkt *pkt)
+{
+	return 0;
+}
+
+static inline enum net_verdict ieee802154_radio_handle_ack(struct net_if *iface,
+							   struct net_pkt *pkt)
+{
+	return NET_CONTINUE;
+}
+
+#define ieee802154_init(_iface_)
+
+#endif /* CONFIG_IEEE802154_RAW_MODE */
 
 #ifdef __cplusplus
 }

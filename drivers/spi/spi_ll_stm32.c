@@ -12,11 +12,12 @@
 #include <board.h>
 #include <errno.h>
 #include <spi.h>
+#include <toolchain.h>
 
 #include <clock_control/stm32_clock_control.h>
 #include <clock_control.h>
 
-#include <spi_ll_stm32.h>
+#include "spi_ll_stm32.h"
 
 #define CONFIG_CFG(cfg)						\
 ((const struct spi_stm32_config * const)(cfg)->dev->config->config_info)
@@ -24,12 +25,19 @@
 #define CONFIG_DATA(cfg)					\
 ((struct spi_stm32_data * const)(cfg)->dev->driver_data)
 
-#ifdef LL_SPI_SR_UDR
+/*
+ * Check for SPI_SR_FRE to determine support for TI mode frame format
+ * error flag, because STM32F1 SoCs do not support it and  STM32CUBE
+ * for F1 family defines an unused LL_SPI_SR_FRE.
+ */
+#if defined(LL_SPI_SR_UDR)
 #define SPI_STM32_ERR_MSK (LL_SPI_SR_UDR | LL_SPI_SR_CRCERR | LL_SPI_SR_MODF | \
 			   LL_SPI_SR_OVR | LL_SPI_SR_FRE)
-#else
+#elif defined(SPI_SR_FRE)
 #define SPI_STM32_ERR_MSK (LL_SPI_SR_CRCERR | LL_SPI_SR_MODF | \
 			   LL_SPI_SR_OVR | LL_SPI_SR_FRE)
+#else
+#define SPI_STM32_ERR_MSK (LL_SPI_SR_CRCERR | LL_SPI_SR_MODF | LL_SPI_SR_OVR)
 #endif
 
 /* Value to shift out when no application data needs transmitting. */
@@ -47,54 +55,94 @@ static int spi_stm32_get_err(SPI_TypeDef *spi)
 	return (int)(sr & SPI_STM32_ERR_MSK);
 }
 
-static inline u8_t spi_stm32_next_tx(struct spi_stm32_data *data)
+static inline u16_t spi_stm32_next_tx(struct spi_stm32_data *data)
 {
-	return spi_context_tx_on(&data->ctx) ?
-		*data->ctx.tx_buf : SPI_STM32_TX_NOP;
+	u16_t tx_frame = SPI_STM32_TX_NOP;
+
+	if (spi_context_tx_buf_on(&data->ctx)) {
+		if (SPI_WORD_SIZE_GET(data->ctx.config->operation) == 8) {
+			tx_frame = UNALIGNED_GET((u8_t *)(data->ctx.tx_buf));
+		} else {
+			tx_frame = UNALIGNED_GET((u16_t *)(data->ctx.tx_buf));
+		}
+	}
+
+	return tx_frame;
 }
 
 /* Shift a SPI frame as master. */
 static void spi_stm32_shift_m(SPI_TypeDef *spi, struct spi_stm32_data *data)
 {
-	u8_t tx_frame;
-	u8_t rx_frame;
+	u16_t tx_frame;
+	u16_t rx_frame;
 
 	tx_frame = spi_stm32_next_tx(data);
 	while (!LL_SPI_IsActiveFlag_TXE(spi)) {
 		/* NOP */
 	}
-	LL_SPI_TransmitData8(spi, tx_frame);
-	/* The update is ignored if TX is off. */
-	spi_context_update_tx(&data->ctx, 1, 1);
+	if (SPI_WORD_SIZE_GET(data->ctx.config->operation) == 8) {
+		LL_SPI_TransmitData8(spi, tx_frame);
+		/* The update is ignored if TX is off. */
+		spi_context_update_tx(&data->ctx, 1, 1);
+	} else {
+		LL_SPI_TransmitData16(spi, tx_frame);
+		/* The update is ignored if TX is off. */
+		spi_context_update_tx(&data->ctx, 2, 1);
+	}
 
 	while (!LL_SPI_IsActiveFlag_RXNE(spi)) {
 		/* NOP */
 	}
-	rx_frame = LL_SPI_ReceiveData8(spi);
-	if (spi_context_rx_on(&data->ctx)) {
-		*data->ctx.rx_buf = rx_frame;
+
+	if (SPI_WORD_SIZE_GET(data->ctx.config->operation) == 8) {
+		rx_frame = LL_SPI_ReceiveData8(spi);
+		if (spi_context_rx_buf_on(&data->ctx)) {
+			UNALIGNED_PUT(rx_frame, (u8_t *)data->ctx.rx_buf);
+		}
 		spi_context_update_rx(&data->ctx, 1, 1);
+	} else {
+		rx_frame = LL_SPI_ReceiveData16(spi);
+		if (spi_context_rx_buf_on(&data->ctx)) {
+			UNALIGNED_PUT(rx_frame, (u16_t *)data->ctx.rx_buf);
+		}
+		spi_context_update_rx(&data->ctx, 2, 1);
 	}
 }
 
 /* Shift a SPI frame as slave. */
 static void spi_stm32_shift_s(SPI_TypeDef *spi, struct spi_stm32_data *data)
 {
-	u8_t tx_frame;
-	u8_t rx_frame;
+	u16_t tx_frame;
+	u16_t rx_frame;
 
 	tx_frame = spi_stm32_next_tx(data);
 	if (LL_SPI_IsActiveFlag_TXE(spi)) {
-		LL_SPI_TransmitData8(spi, tx_frame);
-		/* The update is ignored if TX is off. */
-		spi_context_update_tx(&data->ctx, 1, 1);
+		if (SPI_WORD_SIZE_GET(data->ctx.config->operation) == 8) {
+			LL_SPI_TransmitData8(spi, tx_frame);
+			/* The update is ignored if TX is off. */
+			spi_context_update_tx(&data->ctx, 1, 1);
+		} else {
+			LL_SPI_TransmitData16(spi, tx_frame);
+			/* The update is ignored if TX is off. */
+			spi_context_update_tx(&data->ctx, 2, 1);
+		}
 	}
 
 	if (LL_SPI_IsActiveFlag_RXNE(spi)) {
-		rx_frame = LL_SPI_ReceiveData8(spi);
-		if (spi_context_rx_on(&data->ctx)) {
-			*data->ctx.rx_buf = rx_frame;
+		if (SPI_WORD_SIZE_GET(data->ctx.config->operation) == 8) {
+			rx_frame = LL_SPI_ReceiveData8(spi);
+			if (spi_context_rx_buf_on(&data->ctx)) {
+				UNALIGNED_PUT(rx_frame,
+					      (u8_t *)data->ctx.rx_buf);
+			}
 			spi_context_update_rx(&data->ctx, 1, 1);
+		} else {
+			rx_frame = LL_SPI_ReceiveData16(spi);
+			if (spi_context_rx_buf_on(&data->ctx)) {
+				UNALIGNED_PUT(rx_frame,
+					      (u16_t *)data->ctx.rx_buf);
+			}
+			spi_context_update_rx(&data->ctx, 2, 1);
 		}
 	}
 }
@@ -129,7 +177,7 @@ static void spi_stm32_complete(struct spi_stm32_data *data, SPI_TypeDef *spi,
 
 	spi_context_cs_control(&data->ctx, false);
 
-#if defined(CONFIG_SOC_SERIES_STM32L4X) || defined(CONFIG_SOC_SERIES_STM32F3X)
+#if defined(CONFIG_SPI_STM32_HAS_FIFO)
 	/* Flush RX buffer */
 	while (LL_SPI_IsActiveFlag_RXNE(spi)) {
 		(void) LL_SPI_ReceiveData8(spi);
@@ -197,7 +245,8 @@ static int spi_stm32_configure(struct spi_config *config)
 		return 0;
 	}
 
-	if (SPI_WORD_SIZE_GET(config->operation) != 8) {
+	if ((SPI_WORD_SIZE_GET(config->operation) != 8)
+	    && (SPI_WORD_SIZE_GET(config->operation) != 16)) {
 		return -ENOTSUP;
 	}
 
@@ -223,13 +272,13 @@ static int spi_stm32_configure(struct spi_config *config)
 	LL_SPI_Disable(spi);
 	LL_SPI_SetBaudRatePrescaler(spi, scaler[br - 1]);
 
-	if (SPI_MODE_GET(config->operation) ==  SPI_MODE_CPOL) {
+	if (SPI_MODE_GET(config->operation) & SPI_MODE_CPOL) {
 		LL_SPI_SetClockPolarity(spi, LL_SPI_POLARITY_HIGH);
 	} else {
 		LL_SPI_SetClockPolarity(spi, LL_SPI_POLARITY_LOW);
 	}
 
-	if (SPI_MODE_GET(config->operation) == SPI_MODE_CPHA) {
+	if (SPI_MODE_GET(config->operation) & SPI_MODE_CPHA) {
 		LL_SPI_SetClockPhase(spi, LL_SPI_PHASE_2EDGE);
 	} else {
 		LL_SPI_SetClockPhase(spi, LL_SPI_PHASE_1EDGE);
@@ -261,12 +310,19 @@ static int spi_stm32_configure(struct spi_config *config)
 		}
 	}
 
-	LL_SPI_SetDataWidth(spi, LL_SPI_DATAWIDTH_8BIT);
+	if (SPI_WORD_SIZE_GET(config->operation) ==  8) {
+		LL_SPI_SetDataWidth(spi, LL_SPI_DATAWIDTH_8BIT);
+	} else {
+		LL_SPI_SetDataWidth(spi, LL_SPI_DATAWIDTH_16BIT);
+	}
 
-#if defined(CONFIG_SOC_SERIES_STM32L4X) || defined(CONFIG_SOC_SERIES_STM32F3X)
+#if defined(CONFIG_SPI_STM32_HAS_FIFO)
 	LL_SPI_SetRxFIFOThreshold(spi, LL_SPI_RX_FIFO_TH_QUARTER);
 #endif
+
+#ifndef CONFIG_SOC_SERIES_STM32F1X
 	LL_SPI_SetStandard(spi, LL_SPI_PROTOCOL_MOTOROLA);
+#endif
 
 	/* At this point, it's mandatory to set this on the context! */
 	data->ctx.config = config;
@@ -324,7 +380,7 @@ static int transceive(struct spi_config *config,
 	spi_context_buffers_setup(&data->ctx, tx_bufs, tx_count,
 				  rx_bufs, rx_count, 1);
 
-#if defined(CONFIG_SOC_SERIES_STM32L4X) || defined(CONFIG_SOC_SERIES_STM32F3X)
+#if defined(CONFIG_SPI_STM32_HAS_FIFO)
 	/* Flush RX buffer */
 	while (LL_SPI_IsActiveFlag_RXNE(spi)) {
 		(void) LL_SPI_ReceiveData8(spi);
@@ -418,10 +474,15 @@ static void spi_stm32_irq_config_func_1(struct device *port);
 #endif
 
 static const struct spi_stm32_config spi_stm32_cfg_1 = {
-	.spi = (SPI_TypeDef *) SPI1_BASE,
+	.spi = (SPI_TypeDef *) CONFIG_SPI_1_BASE_ADDRESS,
 	.pclken = {
+#ifdef CONFIG_SOC_SERIES_STM32F0X
+		.enr = LL_APB1_GRP2_PERIPH_SPI1,
+		.bus = STM32_CLOCK_BUS_APB1_2
+#else
 		.enr = LL_APB2_GRP1_PERIPH_SPI1,
 		.bus = STM32_CLOCK_BUS_APB2
+#endif
 	},
 #ifdef CONFIG_SPI_STM32_INTERRUPT
 	.irq_config = spi_stm32_irq_config_func_1,
@@ -441,9 +502,9 @@ DEVICE_AND_API_INIT(spi_stm32_1, CONFIG_SPI_1_NAME, &spi_stm32_init,
 #ifdef CONFIG_SPI_STM32_INTERRUPT
 static void spi_stm32_irq_config_func_1(struct device *dev)
 {
-	IRQ_CONNECT(SPI1_IRQn, CONFIG_SPI_1_IRQ_PRI,
+	IRQ_CONNECT(CONFIG_SPI_1_IRQ, CONFIG_SPI_1_IRQ_PRI,
 		    spi_stm32_isr, DEVICE_GET(spi_stm32_1), 0);
-	irq_enable(SPI1_IRQn);
+	irq_enable(CONFIG_SPI_1_IRQ);
 }
 #endif
 
@@ -456,7 +517,7 @@ static void spi_stm32_irq_config_func_2(struct device *port);
 #endif
 
 static const struct spi_stm32_config spi_stm32_cfg_2 = {
-	.spi = (SPI_TypeDef *) SPI2_BASE,
+	.spi = (SPI_TypeDef *) CONFIG_SPI_2_BASE_ADDRESS,
 	.pclken = {
 		.enr = LL_APB1_GRP1_PERIPH_SPI2,
 		.bus = STM32_CLOCK_BUS_APB1
@@ -479,9 +540,9 @@ DEVICE_AND_API_INIT(spi_stm32_2, CONFIG_SPI_2_NAME, &spi_stm32_init,
 #ifdef CONFIG_SPI_STM32_INTERRUPT
 static void spi_stm32_irq_config_func_2(struct device *dev)
 {
-	IRQ_CONNECT(SPI2_IRQn, CONFIG_SPI_2_IRQ_PRI,
+	IRQ_CONNECT(CONFIG_SPI_2_IRQ, CONFIG_SPI_2_IRQ_PRI,
 		    spi_stm32_isr, DEVICE_GET(spi_stm32_2), 0);
-	irq_enable(SPI2_IRQn);
+	irq_enable(CONFIG_SPI_2_IRQ);
 }
 #endif
 
@@ -494,7 +555,7 @@ static void spi_stm32_irq_config_func_3(struct device *port);
 #endif
 
 static const  struct spi_stm32_config spi_stm32_cfg_3 = {
-	.spi = (SPI_TypeDef *) SPI3_BASE,
+	.spi = (SPI_TypeDef *) CONFIG_SPI_3_BASE_ADDRESS,
 	.pclken = {
 		.enr = LL_APB1_GRP1_PERIPH_SPI3,
 		.bus = STM32_CLOCK_BUS_APB1
@@ -517,9 +578,9 @@ DEVICE_AND_API_INIT(spi_stm32_3, CONFIG_SPI_3_NAME, &spi_stm32_init,
 #ifdef CONFIG_SPI_STM32_INTERRUPT
 static void spi_stm32_irq_config_func_3(struct device *dev)
 {
-	IRQ_CONNECT(SPI3_IRQn, CONFIG_SPI_3_IRQ_PRI,
+	IRQ_CONNECT(CONFIG_SPI_3_IRQ, CONFIG_SPI_3_IRQ_PRI,
 		    spi_stm32_isr, DEVICE_GET(spi_stm32_3), 0);
-	irq_enable(SPI3_IRQn);
+	irq_enable(CONFIG_SPI_3_IRQ);
 }
 #endif
 

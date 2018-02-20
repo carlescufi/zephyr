@@ -120,6 +120,7 @@ struct usb_dw_reg {
 };
 
 /* USB register offsets and masks */
+#define USB_DW_HWCFG4_DEDFIFOMODE BIT(25)
 #define USB_DW_GRSTCTL_AHB_IDLE BIT(31)
 #define USB_DW_GRSTCTL_TX_FNUM_OFFSET (6)
 #define USB_DW_GRSTCTL_TX_FFLSH BIT(5)
@@ -147,6 +148,8 @@ struct usb_dw_reg {
 #define USB_DW_DEPCTL_SNAK BIT(27)
 #define USB_DW_DEPCTL_CNAK BIT(26)
 #define USB_DW_DEPCTL_STALL BIT(21)
+#define USB_DW_DEPCTL_TXFNUM_OFFSET (22)
+#define USB_DW_DEPCTL_TXFNUM_MASK (0xf << 22)
 #define USB_DW_DEPCTL_EP_TYPE_MASK (0x3 << 18)
 #define USB_DW_DEPCTL_EP_TYPE_OFFSET (18)
 #define USB_DW_DEPCTL_EP_TYPE_CONTROL (0)
@@ -193,13 +196,6 @@ struct usb_dw_reg {
 
 #define USB_DW_CORE_RST_TIMEOUT_US 10000
 #define USB_DW_PLL_TIMEOUT_US 100
-
-#if defined(CONFIG_SOC_QUARK_SE_C1000)
-#define USB_DW_BASE QM_USB_0_BASE
-#define USB_DW_IRQ QM_IRQ_USB_0_INT
-#else
-#error "Unsupported board"
-#endif
 
 #define USB_DW_EP_FIFO(ep) (*(u32_t *)(USB_DW_BASE + 0x1000 * (ep + 1)))
 /* USB register block base address */

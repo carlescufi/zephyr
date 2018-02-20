@@ -195,7 +195,10 @@ static void init_rx_queue(void)
 				 K_ESSENTIAL, K_NO_WAIT);
 }
 
-#if defined(CONFIG_NET_IP_ADDR_CHECK)
+/* If loopback driver is enabled, then direct packets to it so the address
+ * check is not needed.
+ */
+#if defined(CONFIG_NET_IP_ADDR_CHECK) && !defined(CONFIG_NET_LOOPBACK)
 /* Check if the IPv{4|6} addresses are proper. As this can be expensive,
  * make this optional.
  */
@@ -343,6 +346,10 @@ int net_recv_data(struct net_if *iface, struct net_pkt *pkt)
 
 	NET_DBG("fifo %p iface %p pkt %p len %zu", &rx_queue, iface, pkt,
 		net_pkt_get_len(pkt));
+
+	if (IS_ENABLED(CONFIG_NET_ROUTING)) {
+		net_pkt_set_orig_iface(pkt, iface);
+	}
 
 	net_pkt_set_iface(pkt, iface);
 

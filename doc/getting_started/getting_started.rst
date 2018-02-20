@@ -6,6 +6,46 @@ Getting Started Guide
 Use this guide to get started with your :ref:`Zephyr <introducing_zephyr>`
 development.
 
+Checking Out the Source Code Anonymously
+****************************************
+
+The Zephyr source code is hosted in a GitHub repo that supports
+anonymous cloning via git. There are scripts and such in this repo that
+you'll need to set up your development environment, and we'll be using
+Git to get this repo.  (If you don't have Git installed, see the
+beginning of the OS-specific instructions below for help.)
+
+We'll begin by
+using Git to clone the repository anonymously. Enter:
+
+.. code-block:: console
+
+   # On Linux/macOS
+   cd ~
+   # On Windows
+   cd %userprofile%
+
+   git clone https://github.com/zephyrproject-rtos/zephyr.git
+
+You have successfully checked out a copy of the source code to your local
+machine in the ~/zephyr folder.
+
+.. _getting_started_cmake:
+
+A brief note on the Zephyr build system
+***************************************
+
+The Zephyr project uses `CMake`_ as a tool for managing the building of the
+project. CMake is able to generate build files in different formats (also
+known as "generators"), and the following ones are currently supported
+by Zephyr:
+
+ * ``make``: Supported on UNIX-like platforms (Linux, macOS).
+ * ``ninja``: Supported on all platforms.
+
+Most of the examples in the Zephyr documentation use `ninja` as a build tool
+but you should be able to use any generator on any of the examples listed.
+
 Set Up the Development Environment
 **********************************
 
@@ -13,7 +53,7 @@ The Zephyr project supports these operating systems:
 
 * Linux
 * macOS
-* Windows 8.1
+* Microsoft Windows
 
 Use the following procedures to create a new development environment.
 
@@ -25,20 +65,7 @@ Use the following procedures to create a new development environment.
    installation_win.rst
 
 
-Checking Out the Source Code Anonymously
-========================================
-
-The code is hosted in a GitHub repo that supports
-anonymous cloning via git.
-
-To clone the repository anonymously, enter:
-
-.. code-block:: console
-
-   $ git clone https://github.com/zephyrproject-rtos/zephyr.git
-
-You have successfully checked out a copy of the source code to your local
-machine.
+.. _getting_started_run_sample:
 
 Building and Running an Application
 ***********************************
@@ -63,37 +90,58 @@ To build an example application follow these steps:
 
    .. code-block:: console
 
-      $ export ZEPHYR_GCC_VARIANT=zephyr
-      $ export ZEPHYR_SDK_INSTALL_DIR=<sdk installation directory>
+
+      # On Linux/macOS
+      export ZEPHYR_TOOLCHAIN_VARIANT=zephyr
+      export ZEPHYR_SDK_INSTALL_DIR=<sdk installation directory>
+      # On Windows
+      set ZEPHYR_TOOLCHAIN_VARIANT=zephyr
+      set ZEPHYR_SDK_INSTALL_DIR=<sdk installation directory>
+
+   .. note:: In previous releases of Zephyr, the ``ZEPHYR_TOOLCHAIN_VARIANT``
+             variable was called ``ZEPHYR_GCC_VARIANT``.
 
 #. Navigate to the main project directory:
 
    .. code-block:: console
 
-      $ cd zephyr-project
+      cd zephyr
 
-#. Source the project environment file to set the project environment
-   variables:
-
-   .. code-block:: console
-
-      $ source zephyr-env.sh
-
-#. Build the :ref:`hello_world` example project, enter:
+#. Set the project environment variables:
 
    .. code-block:: console
 
-      $ cd $ZEPHYR_BASE/samples/hello_world
-      $ make
+      # On Linux/macOS
+      source zephyr-env.sh
+      # On Windows
+      zephyr-env.cmd
 
-The above invocation of make will build the :ref:`hello_world` sample application
-using the default settings defined in the application's Makefile. You can
-build for a different board by defining the variable BOARD with one of the
-supported boards, for example:
+#. Build the :ref:`hello_world` example for the `arduino_101` board, enter:
 
-.. code-block:: console
+   .. zephyr-app-commands::
+      :zephyr-app: samples/hello_world
+      :board: arduino_101
+      :build-dir: arduino_101
+      :goals: build
 
-   $ make BOARD=arduino_101
+   On Linux/macOS you can also build with ``make`` instead of ``ninja``:
+
+   .. zephyr-app-commands::
+      :zephyr-app: samples/hello_world
+      :generator: make
+      :host-os: unix
+      :board: arduino_101
+      :build-dir: arduino_101
+      :goals: build
+
+You can build for a different board by defining the variable BOARD
+with another of the supported boards, for example:
+
+   .. zephyr-app-commands::
+      :zephyr-app: samples/hello_world
+      :board: arduino_due
+      :build-dir: arduino_due
+      :goals: build
 
 For further information on the supported boards go see
 :ref:`here <boards>`. Alternatively, run the following command to obtain a list
@@ -101,79 +149,103 @@ of the supported boards:
 
 .. code-block:: console
 
-   $ make help
+   ninja usage
 
 Sample projects for different features of the project are available at
-at :file:`$ZEPHYR_BASE/samples`.
+at :file:`ZEPHYR_BASE/samples`.
 After building an application successfully, the results can be found in the
-:file:`outdir` sub-directory under the application root directory, in a
-subdirectory that matches the BOARD string.
+directory where cmake was invoked.
 
 The ELF binaries generated by the build system are named by default
 :file:`zephyr.elf`. This value can be overridden in the application
 configuration The build system generates different names for different use cases
 depending on the hardware and boards used.
 
-.. _third_party_x_compilers:
+.. _sdkless_builds:
 
-Using Custom and 3rd Party Cross Compilers
-==========================================
+Building without the Zephyr SDK
+===============================
 
 The Zephyr SDK is provided for convenience and ease of use. It provides
 cross-compilers for all ports supported by the Zephyr OS and does not require
 any extra flags when building applications or running tests.
 
-If you have a custom cross-compiler or if you wish to use a vendor provided SDK,
-follow the steps below to build with any custom or 3rd party cross-compilers:
+In addition to cross-compilers, the Zephyr SDK also provides prebuilt
+host tools. To use the SDK host tools alongside a custom or 3rd party
+cross-compiler, keep the ZEPHYR_SDK_INSTALL_DIR environment variable
+set to the Zephyr SDK installation directory.
 
-#. To avoid any conflicts with the Zephyr SDK, enter the following commands.
+To build without the Zephyr SDK's prebuilt host tools, the
+ZEPHYR_SDK_INSTALL_DIR environment variable must be unset, the host
+tools must be built and added to path, and a 3rd party cross-compiler
+must be installed.
+
+#. Follow the steps below to build without the Zephyr SDK:
 
    .. code-block:: console
 
-      $ unset ZEPHYR_GCC_VARIANT
-      $ unset ZEPHYR_SDK_INSTALL_DIR
+      # On Linux/macOS
+      unset ZEPHYR_TOOLCHAIN_VARIANT
+      unset ZEPHYR_SDK_INSTALL_DIR
+      cd <zephyr git clone location>
+      source zephyr-env.sh
+      # On Windows
+      set ZEPHYR_TOOLCHAIN_VARIANT=
+      set ZEPHYR_SDK_INSTALL_DIR=
+      cd <zephyr git clone location>
+      zephyr-env.cmd
+
+
+#. On UNIX platforms, Build Kconfig in :file:`$ZEPHYR_BASE/build` and add
+   it to path
+
+   .. code-block:: console
+
+      cd $ZEPHYR_BASE
+      mkdir build && cd build
+      cmake $ZEPHYR_BASE/scripts
+      make
+      echo "export PATH=$PWD/kconfig:\$PATH" >> $HOME/.zephyrrc
+      source $ZEPHYR_BASE/zephyr-env.sh
+
+   .. note::
+
+      You only need to do this once after cloning the git repository.
+
+Now that the host tools are installed, a 3rd party cross compiler must
+be installed. See `Using Custom and 3rd Party Cross Compilers`_ for
+details.
+
+.. _third_party_x_compilers:
+
+Using Custom and 3rd Party Cross Compilers
+==========================================
+
+To use a 3rd party cross compiler that is not provided by the Zephyr
+SDK, follow the steps below. It is possible to use a 3rd party cross
+compiler and still use the Zephyr SDK's host tools. See `Building
+without the Zephyr SDK`_ for details.
 
 #. We will use the `GCC ARM Embedded`_ compiler for this example, download the
    package suitable for your operating system from the `GCC ARM Embedded`_ website
    and extract it on your file system. This example assumes the compiler was
-   extracted to: :file:`~/gcc-arm-none-eabi-5_3-2016q1/`.
+   extracted to: :file:`<user folder>/gcc-arm-none-eabi-5_3-2016q1/`.
 
-#. Navigate to the main project directory:
-
-   .. code-block:: console
-
-      $ cd zephyr-project
-
-#. Source the project environment file to set the project environment
-   variables:
+#. Build the example :ref:`hello_world` project, enter:
 
    .. code-block:: console
 
-      $ source zephyr-env.sh
+      # On Linux/macOS
+      export GCCARMEMB_TOOLCHAIN_PATH="~/gcc-arm-none-eabi-5_3-2016q1/"
+      export ZEPHYR_TOOLCHAIN_VARIANT=gccarmemb
+      # On Windows
+      set GCCARMEMB_TOOLCHAIN_PATH="%userprofile%\gcc-arm-none-eabi-5_3-2016q1\"
+      set ZEPHYR_TOOLCHAIN_VARIANT=gccarmemb
 
-#. Build the example :ref:`hello_world` project and make sure you supply the
-   CROSS_COMPILE on the command line, enter:
-
-   .. code-block:: console
-
-      $ export GCCARMEMB_TOOLCHAIN_PATH="~/gcc-arm-none-eabi-5_3-2016q1/"
-      $ export ZEPHYR_GCC_VARIANT=gccarmemb
-      $ cd $ZEPHYR_BASE/samples/hello_world
-      $ make CROSS_COMPILE=~/gcc-arm-none-eabi-5_3-2016q1/bin/arm-none-eabi- BOARD=arduino_due
-
-The above will build the sample using the toolchain downloaded from
-`GCC ARM Embedded`_.
-
-Alternatively, you can use the existing support for GCC ARM Embedded:
-
-   .. code-block:: console
-
-      $ export GCCARMEMB_TOOLCHAIN_PATH="~/gcc-arm-none-eabi-5_3-2016q1/"
-      $ export ZEPHYR_GCC_VARIANT=gccarmemb
-      $ cd zephyr-project
-      $ source zephyr-env.sh
-      $ cd $ZEPHYR_BASE/samples/hello_world
-      $ make BOARD=arduino_due
+   .. zephyr-app-commands::
+      :zephyr-app: samples/hello_world
+      :board: arduino_due
+      :goals: build
 
 Running a Sample Application in QEMU
 ====================================
@@ -187,19 +259,49 @@ completed.
 To run an application using the x86 emulation board configuration (qemu_x86),
 type:
 
-.. code-block:: console
+.. zephyr-app-commands::
+   :zephyr-app: samples/hello_world
+   :host-os: unix
+   :board: qemu_x86
+   :goals: build run
 
-   $ make BOARD=qemu_x86 run
+To exit the qemu emulator, press ``Ctrl-a``, followed by ``x``.
 
-To run an application using the ARM qemu_cortex_m3 board configuration, type:
-
-.. code-block:: console
-
-   $ make BOARD=qemu_cortex_m3 run
+Use the ``qemu_cortex_m3`` board configuration to test the ARM build.
 
 QEMU is not supported on all boards and SoCs. When developing for a specific
 hardware target you should always test on the actual hardware and should not
 rely on testing in the QEMU emulation environment only.
 
+Running a Sample Application natively (POSIX OS)
+================================================
+
+It is also possible to compile some of the sample and test applications to run
+as native process on a POSIX OS (e.g. Linux).
+To be able to do this, remember to have installed the 32 bit libC if your OS is
+natively 64bit.
+
+To compile and run an application in this way, type:
+
+.. zephyr-app-commands::
+   :zephyr-app: samples/hello_world
+   :host-os: unix
+   :board: native_posix
+   :goals: build
+
+and then:
+
+.. code-block:: console
+
+   ninja run
+   # or just:
+   zephyr/zephyr.exe
+   # Press Ctrl+C to exit
+
+This executable can be instrumented like any other Linux process. For ex. with gdb
+or valgrind.
+Note that the native port is currently only tested in Linux.
 
 .. _GCC ARM Embedded: https://launchpad.net/gcc-arm-embedded
+.. _CMake: https://cmake.org
+

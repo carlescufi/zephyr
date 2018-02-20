@@ -31,11 +31,11 @@ Building and Running
 
 Build the Zephyr version of the sockets/echo application like this:
 
-.. code-block:: console
-
-    $ cd $ZEPHYR_BASE/samples/net/sockets/dumb_http_server
-    $ make pristine
-    $ make BOARD=<board_to_use>
+.. zephyr-app-commands::
+   :zephyr-app: samples/net/sockets/dump_http_server
+   :board: <board_to_use>
+   :goals: build
+   :compact:
 
 ``board_to_use`` defaults to ``qemu_x86``. In this case, you can run the
 application in QEMU using ``make run``. If you used another BOARD, you
@@ -45,20 +45,21 @@ the documentation at :ref:`boards`.
 
 After the sample starts, it expects connections at 192.0.2.1, port 8080.
 The easiest way to connect is by opening a following URL in a web
-browser: http://192.0.2.1:8080/ . You should see a page with content
-"Plain-text example.". Alternatively, a tool like ``curl`` can be used:
+browser: http://192.0.2.1:8080/ . You should see a page with a sample
+content about Zephyr (captured at a particular time from Zephyr's web
+site, note that it may differ from the content on the live Zephyr site).
+Alternatively, a tool like ``curl`` can be used:
 
 .. code-block:: console
 
     $ curl http://192.0.2.1:8080/
-    Plain-text example.
 
 Finally, you can run an HTTP profiling/load tool like Apache Bench
 (``ab``) against the server:
 
     $ ab -n10 http://192.0.2.1:8080/
 
-``-n`` parameter specified the number of HTTP requests to issue against
+``-n`` parameter specifies the number of HTTP requests to issue against
 a server.
 
 Running application on POSIX Host

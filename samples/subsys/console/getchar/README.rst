@@ -29,11 +29,12 @@ Building and Running
 
 The easiest way to run this sample is using QEMU:
 
-.. code-block:: console
-
-   $ cd samples/console/getchar
-   $ make BOARD=qemu_x86
-   $ make BOARD=qemu_x86 run
+.. zephyr-app-commands::
+   :zephyr-app: samples/subsys/console/getchar
+   :host-os: unix
+   :board: qemu_x86
+   :goals: run
+   :compact:
 
 Now start pressing keys on a keyboard, and they will be printed both as
 hex values and in character form. Be sure to press Enter, Up/Down, etc.

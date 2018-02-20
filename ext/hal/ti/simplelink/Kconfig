@@ -14,4 +14,10 @@ config SIMPLELINK_HOST_DRIVER
 	depends on NEWLIB_LIBC
 	select ERRNO
 	help
-	Build the SimpleLink host driver
+	  Build the SimpleLink host driver
+
+# Kconfig - MSP432 SDK HAL configuration
+
+config HAS_MSP432P4XXSDK
+        bool
+        select HAS_CMSIS

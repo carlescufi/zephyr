@@ -43,10 +43,12 @@ Building and Running
 This project outputs to the console.  It can be built and executed
 on QEMU as follows:
 
-.. code-block:: console
-
-   $ cd samples/philosophers
-   $ make run
+.. zephyr-app-commands::
+   :zephyr-app: samples/philosophers
+   :host-os: unix
+   :board: qemu_x86
+   :goals: run
+   :compact:
 
 Sample Output
 =============

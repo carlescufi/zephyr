@@ -1,11 +1,11 @@
 
 if BOARD_GALILEO
 
+config BUILD_OUTPUT_STRIPPED
+	def_bool y
+
 config BOARD
 	default galileo
-
-config PINMUX
-	def_bool y
 
 config I2C
 	def_bool y

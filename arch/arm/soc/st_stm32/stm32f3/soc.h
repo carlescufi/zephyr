@@ -27,7 +27,7 @@
 
 #include <device.h>
 #include <misc/util.h>
-#include <drivers/rand32.h>
+#include <random/rand32.h>
 
 #include <stm32f3xx.h>
 
@@ -47,6 +47,10 @@
 
 #ifdef CONFIG_I2C
 #include <stm32f3xx_ll_i2c.h>
+#endif
+
+#ifdef CONFIG_IWDG_STM32
+#include <stm32f3xx_ll_iwdg.h>
 #endif
 
 #endif /* !_ASMLANGUAGE */

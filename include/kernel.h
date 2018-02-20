@@ -26,9 +26,11 @@
 #include <misc/slist.h>
 #include <misc/util.h>
 #include <kernel_version.h>
-#include <drivers/rand32.h>
+#include <random/rand32.h>
 #include <kernel_arch_thread.h>
 #include <syscall.h>
+#include <misc/printk.h>
+#include <arch/cpu.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -42,7 +44,6 @@ extern "C" {
  */
 
 #ifdef CONFIG_KERNEL_DEBUG
-#include <misc/printk.h>
 #define K_DEBUG(fmt, ...) printk("[%s]  " fmt, __func__, ##__VA_ARGS__)
 #else
 #define K_DEBUG(fmt, ...)
@@ -147,11 +148,9 @@ enum k_objects {
 	/* Driver subsystems */
 	K_OBJ_DRIVER_ADC,
 	K_OBJ_DRIVER_AIO_CMP,
-	K_OBJ_DRIVER_CLOCK_CONTROL,
 	K_OBJ_DRIVER_COUNTER,
 	K_OBJ_DRIVER_CRYPTO,
 	K_OBJ_DRIVER_DMA,
-	K_OBJ_DRIVER_ETH,
 	K_OBJ_DRIVER_FLASH,
 	K_OBJ_DRIVER_GPIO,
 	K_OBJ_DRIVER_I2C,
@@ -159,13 +158,11 @@ enum k_objects {
 	K_OBJ_DRIVER_IPM,
 	K_OBJ_DRIVER_PINMUX,
 	K_OBJ_DRIVER_PWM,
-	K_OBJ_DRIVER_RANDOM,
+	K_OBJ_DRIVER_ENTROPY,
 	K_OBJ_DRIVER_RTC,
 	K_OBJ_DRIVER_SENSOR,
-	K_OBJ_DRIVER_SHARED_IRQ,
 	K_OBJ_DRIVER_SPI,
 	K_OBJ_DRIVER_UART,
-	K_OBJ_DRIVER_WDT,
 
 	K_OBJ_LAST
 };
@@ -181,6 +178,32 @@ struct _k_object {
 	u32_t data;
 } __packed;
 
+struct _k_object_assignment {
+	struct k_thread *thread;
+	void * const *objects;
+};
+
+/**
+ * @brief Grant a static thread access to a list of kernel objects
+ *
+ * For threads declared with K_THREAD_DEFINE(), grant the thread access to
+ * a set of kernel objects. These objects do not need to be in an initialized
+ * state. The permissions will be granted when the threads are initialized
+ * in the early boot sequence.
+ *
+ * All arguments beyond the first must be pointers to kernel objects.
+ *
+ * @param name_ Name of the thread, as passed to K_THREAD_DEFINE()
+ */
+#define K_THREAD_ACCESS_GRANT(name_, ...) \
+	static void * const _CONCAT(_object_list_, name_)[] = \
+		{ __VA_ARGS__, NULL }; \
+	static __used __in_section_unique(object_access) \
+		const struct _k_object_assignment \
+		_CONCAT(_object_access_, name_) = \
+			{ (&_k_thread_obj_ ## name_), \
+			  (_CONCAT(_object_list_, name_)) }
+
 #define K_OBJ_FLAG_INITIALIZED	BIT(0)
 #define K_OBJ_FLAG_PUBLIC	BIT(1)
 
@@ -195,6 +218,9 @@ struct _k_object {
  */
 void _k_object_init(void *obj);
 #else
+
+#define K_THREAD_ACCESS_GRANT(thread, ...)
+
 static inline void _k_object_init(void *obj)
 {
 	ARG_UNUSED(obj);
@@ -366,17 +392,23 @@ struct _thread_base {
 		u16_t preempt;
 	};
 
+#ifdef CONFIG_SMP
+	/* True for the per-CPU idle threads */
+	u8_t is_idle;
+
+	/* Non-zero when actively running on a CPU */
+	u8_t active;
+
+	/* CPU index on which thread was last run */
+	u8_t cpu;
+#endif
+
 	/* data returned by APIs */
 	void *swap_data;
 
 #ifdef CONFIG_SYS_CLOCK_EXISTS
 	/* this thread's entry in a timeout queue */
 	struct _timeout timeout;
-#endif
-
-#ifdef CONFIG_USERSPACE
-	/* Bit position in kernel object permissions bitfield for this thread */
-	unsigned int perm_index;
 #endif
 };
 
@@ -447,6 +479,18 @@ struct k_thread {
 	/* Base address of thread stack */
 	k_thread_stack_t *stack_obj;
 #endif /* CONFIG_USERSPACE */
+
+#if defined(CONFIG_USE_SWITCH)
+	/* When using __switch() a few previously arch-specific items
+	 * become part of the core OS
+	 */
+
+	/* _Swap() return value */
+	int swap_retval;
+
+	/* Context handle returned via _arch_switch() */
+	void *switch_handle;
+#endif
 
 	/* arch-specifics: must always be at the end */
 	struct _thread_arch arch;
@@ -587,6 +631,22 @@ extern FUNC_NORETURN void k_thread_user_mode_enter(k_thread_entry_t entry,
 						   void *p3);
 
 /**
+ * @brief Grant a thread access to a NULL-terminated  set of kernel objects
+ *
+ * This is a convenience function. For the provided thread, grant access to
+ * the remaining arguments, which must be pointers to kernel objects.
+ * The final argument must be a NULL.
+ *
+ * The thread object must be initialized (i.e. running). The objects don't
+ * need to be.
+ *
+ * @param thread Thread to grant access to objects
+ * @param ... NULL-terminated list of kernel object pointers
+ */
+extern void __attribute__((sentinel))
+	k_thread_access_grant(struct k_thread *thread, ...);
+
+/**
  * @brief Put the current thread to sleep.
  *
  * This routine puts the current thread to sleep for @a duration
@@ -702,7 +762,6 @@ struct _static_thread_data {
 	u32_t init_options;
 	s32_t init_delay;
 	void (*init_abort)(void);
-	u32_t init_groups;
 };
 
 #define _THREAD_INITIALIZER(thread, stack, stack_size,           \
@@ -720,7 +779,6 @@ struct _static_thread_data {
 	.init_options = (options),                               \
 	.init_delay = (delay),                                   \
 	.init_abort = (abort),                                   \
-	.init_groups = (groups),                                 \
 	}
 
 /**
@@ -1104,7 +1162,7 @@ static inline s64_t __ticks_to_ms(s64_t ticks)
 #endif
 
 #else
-	__ASSERT(ticks == 0, "");
+	__ASSERT(ticks == 0, "ticks not zero");
 	return 0;
 #endif
 }
@@ -2271,12 +2329,11 @@ extern void k_delayed_work_init(struct k_delayed_work *work,
  * the workqueue and becomes pending.
  *
  * Submitting a previously submitted delayed work item that is still
- * counting down cancels the existing submission and restarts the countdown
- * using the new delay. If the work item is currently pending on the
- * workqueue's queue because the countdown has completed it is too late to
- * resubmit the item, and resubmission fails without impacting the work item.
- * If the work item has already been processed, or is currently being processed,
- * its work is considered complete and the work item can be resubmitted.
+ * counting down cancels the existing submission and restarts the
+ * countdown using the new delay.  Note that this behavior is
+ * inherently subject to race conditions with the pre-existing
+ * timeouts and work queue, so care must be taken to synchronize such
+ * resubmissions externally.
  *
  * @warning
  * A delayed work item must not be modified until it has been processed
@@ -2383,7 +2440,7 @@ static inline int k_delayed_work_submit(struct k_delayed_work *work,
  *
  * This routine computes the (approximate) time remaining before a
  * delayed work gets executed. If the delayed work is not waiting to be
- * schedules, it returns zero.
+ * scheduled, it returns zero.
  *
  * @param work     Delayed work item.
  *
@@ -3496,23 +3553,28 @@ struct k_mem_pool {
 
 #define _MPOOL_HAVE_LVL(max, min, l) (((max) >> (2*(l))) >= (min) ? 1 : 0)
 
-#define _MPOOL_LVLS(maxsz, minsz)		\
-	(_MPOOL_HAVE_LVL(maxsz, minsz, 0) +	\
-	_MPOOL_HAVE_LVL(maxsz, minsz, 1) +	\
-	_MPOOL_HAVE_LVL(maxsz, minsz, 2) +	\
-	_MPOOL_HAVE_LVL(maxsz, minsz, 3) +	\
-	_MPOOL_HAVE_LVL(maxsz, minsz, 4) +	\
-	_MPOOL_HAVE_LVL(maxsz, minsz, 5) +	\
-	_MPOOL_HAVE_LVL(maxsz, minsz, 6) +	\
-	_MPOOL_HAVE_LVL(maxsz, minsz, 7) +	\
-	_MPOOL_HAVE_LVL(maxsz, minsz, 8) +	\
-	_MPOOL_HAVE_LVL(maxsz, minsz, 9) +	\
-	_MPOOL_HAVE_LVL(maxsz, minsz, 10) +	\
-	_MPOOL_HAVE_LVL(maxsz, minsz, 11) +	\
-	_MPOOL_HAVE_LVL(maxsz, minsz, 12) +	\
-	_MPOOL_HAVE_LVL(maxsz, minsz, 13) +	\
-	_MPOOL_HAVE_LVL(maxsz, minsz, 14) +	\
-	_MPOOL_HAVE_LVL(maxsz, minsz, 15))
+#define __MPOOL_LVLS(maxsz, minsz)		\
+	(_MPOOL_HAVE_LVL((maxsz), (minsz), 0) +	\
+	_MPOOL_HAVE_LVL((maxsz), (minsz), 1) +	\
+	_MPOOL_HAVE_LVL((maxsz), (minsz), 2) +	\
+	_MPOOL_HAVE_LVL((maxsz), (minsz), 3) +	\
+	_MPOOL_HAVE_LVL((maxsz), (minsz), 4) +	\
+	_MPOOL_HAVE_LVL((maxsz), (minsz), 5) +	\
+	_MPOOL_HAVE_LVL((maxsz), (minsz), 6) +	\
+	_MPOOL_HAVE_LVL((maxsz), (minsz), 7) +	\
+	_MPOOL_HAVE_LVL((maxsz), (minsz), 8) +	\
+	_MPOOL_HAVE_LVL((maxsz), (minsz), 9) +	\
+	_MPOOL_HAVE_LVL((maxsz), (minsz), 10) +	\
+	_MPOOL_HAVE_LVL((maxsz), (minsz), 11) +	\
+	_MPOOL_HAVE_LVL((maxsz), (minsz), 12) +	\
+	_MPOOL_HAVE_LVL((maxsz), (minsz), 13) +	\
+	_MPOOL_HAVE_LVL((maxsz), (minsz), 14) +	\
+	_MPOOL_HAVE_LVL((maxsz), (minsz), 15))
+
+#define _MPOOL_MINBLK sizeof(sys_dnode_t)
+
+#define _MPOOL_LVLS(max, min)		\
+	__MPOOL_LVLS((max), (min) >= _MPOOL_MINBLK ? (min) : _MPOOL_MINBLK)
 
 /* Rounds the needed bits up to integer multiples of u32_t */
 #define _MPOOL_LBIT_WORDS_UNCLAMPED(n_max, l) \
@@ -3622,15 +3684,16 @@ extern int k_mem_pool_alloc(struct k_mem_pool *pool, struct k_mem_block *block,
 extern void k_mem_pool_free(struct k_mem_block *block);
 
 /**
- * @brief Defragment a memory pool.
+ * @brief Free memory allocated from a memory pool.
  *
- * This is a no-op API preserved for backward compatibility only.
+ * This routine releases a previously allocated memory block back to its
+ * memory pool
  *
- * @param pool Unused
+ * @param id Memory block identifier.
  *
  * @return N/A
  */
-static inline void __deprecated k_mem_pool_defrag(struct k_mem_pool *pool) {}
+extern void k_mem_pool_free_id(struct k_mem_block_id *id);
 
 /**
  * @} end addtogroup mem_pool_apis
@@ -3667,6 +3730,19 @@ extern void *k_malloc(size_t size);
  * @return N/A
  */
 extern void k_free(void *ptr);
+
+/**
+ * @brief Allocate memory from heap, array style
+ *
+ * This routine provides traditional calloc() semantics. Memory is
+ * allocated from the heap memory pool and zeroed.
+ *
+ * @param nmemb Number of elements in the requested array
+ * @param size Size of each array element (in bytes).
+ *
+ * @return Address of the allocated memory if successful; otherwise NULL.
+ */
+extern void *k_calloc(size_t nmemb, size_t size);
 
 /**
  * @} end defgroup heap_apis
@@ -3730,10 +3806,6 @@ enum _poll_states_bits {
 	       + _POLL_NUM_STATES \
 	       + 1 /* modes */ \
 	      ))
-
-#if _POLL_EVENT_NUM_UNUSED_BITS < 0
-#error overflow of 32-bit word in struct k_poll_event
-#endif
 
 /* end of polling API - PRIVATE */
 
@@ -3894,6 +3966,7 @@ extern void k_poll_event_init(struct k_poll_event *event, u32_t type,
  *
  * @retval 0 One or more events are ready.
  * @retval -EAGAIN Waiting period timed out.
+ * @retval -EINTR Poller thread has been interrupted.
  */
 
 extern int k_poll(struct k_poll_event *events, int num_events,
@@ -3967,14 +4040,10 @@ extern void k_cpu_atomic_idle(unsigned int key);
 
 extern void _sys_power_save_idle_exit(s32_t ticks);
 
-#include <arch/cpu.h>
-
 #ifdef _ARCH_EXCEPT
 /* This archtecture has direct support for triggering a CPU exception */
 #define _k_except_reason(reason)	_ARCH_EXCEPT(reason)
 #else
-
-#include <misc/printk.h>
 
 /* NOTE: This is the implementation for arches that do not implement
  * _ARCH_EXCEPT() to generate a real CPU exception.
@@ -4177,28 +4246,30 @@ static inline char *K_THREAD_STACK_BUFFER(k_thread_stack_t *sym)
 		MEM_PARTITION_ENTRY((u32_t)start, size, attr)
 #endif /* _ARCH_MEM_PARTITION_ALIGN_CHECK */
 
-
 /* memory partition */
 struct k_mem_partition {
 	/* start address of memory partition */
 	u32_t start;
 	/* size of memory partition */
 	u32_t size;
+#ifdef CONFIG_USERSPACE
 	/* attribute of memory partition */
-	u32_t attr;
+	k_mem_partition_attr_t attr;
+#endif	/* CONFIG_USERSPACE */
 };
 
-#if defined(CONFIG_USERSPACE)
 /* memory domian */
 struct k_mem_domain {
 	/* number of partitions in the domain */
 	u32_t num_partitions;
+#ifdef CONFIG_USERSPACE
 	/* partitions in the domain */
 	struct k_mem_partition partitions[CONFIG_MAX_DOMAIN_PARTITIONS];
+#endif	/* CONFIG_USERSPACE */
 	/* domain q */
 	sys_dlist_t mem_domain_q;
 };
-#endif /* CONFIG_USERSPACE */
+
 
 /**
  * @brief Initialize a memory domain.
@@ -4280,6 +4351,31 @@ extern void k_mem_domain_remove_thread(k_tid_t thread);
  * @param n The length of the string
  */
 __syscall void k_str_out(char *c, size_t n);
+
+/**
+ * @brief Start a numbered CPU on a MP-capable system
+
+ * This starts and initializes a specific CPU.  The main thread on
+ * startup is running on CPU zero, other processors are numbered
+ * sequentially.  On return from this function, the CPU is known to
+ * have begun operating and will enter the provided function.  Its
+ * interrupts will be initialied but disabled such that irq_unlock()
+ * with the provided key will work to enable them.
+ *
+ * Normally, in SMP mode this function will be called by the kernel
+ * initialization and should not be used as a user API.  But it is
+ * defined here for special-purpose apps which want Zephyr running on
+ * one core and to use others for design-specific processing.
+ *
+ * @param cpu_num Integer number of the CPU
+ * @param stack Stack memory for the CPU
+ * @param sz Stack buffer size, in bytes
+ * @param fn Function to begin running on the CPU.  First argument is
+ *        an irq_unlock() key.
+ * @param arg Untyped argument to be passed to "fn"
+ */
+extern void _arch_start_cpu(int cpu_num, k_thread_stack_t *stack, int sz,
+			    void (*fn)(int, void *), void *arg);
 
 #ifdef __cplusplus
 }

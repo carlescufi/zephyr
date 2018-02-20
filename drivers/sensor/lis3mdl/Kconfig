@@ -12,6 +12,8 @@ menuconfig LIS3MDL
 	help
 	  Enable driver for LIS3MDL I2C-based magnetometer.
 
+if !HAS_DTS_I2C_DEVICE
+
 config LIS3MDL_NAME
 	string
 	prompt "Driver name"
@@ -38,6 +40,8 @@ config LIS3MDL_I2C_MASTER_DEV_NAME
 	help
 	  Specify the device name of the I2C master device to which LIS3MDL is
 	  connected.
+
+endif
 
 choice
 	prompt "Trigger mode"

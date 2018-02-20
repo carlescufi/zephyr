@@ -151,7 +151,7 @@ static void send_tcp_data(struct net_app_ctx *ctx,
 
 	data->received_tcp = 0;
 
-	pkt = prepare_send_pkt(ctx, data->proto, data->expecting_tcp);
+	pkt = prepare_send_pkt(ctx, data->proto, &data->expecting_tcp);
 	if (!pkt) {
 		return;
 	}
@@ -272,7 +272,8 @@ static void tcp_connected(struct net_app_ctx *ctx,
 
 static int connect_tcp(struct net_app_ctx *ctx, const char *peer,
 		       void *user_data, u8_t *result_buf,
-		       size_t result_buf_len, u8_t *stack, size_t stack_size)
+		       size_t result_buf_len,
+		       k_thread_stack_t *stack, size_t stack_size)
 {
 	struct data *data = user_data;
 	int ret;

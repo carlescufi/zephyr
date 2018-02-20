@@ -23,10 +23,10 @@ the **bar** component of **foo**, you should copy the sample folder to
 
 The sample contains the following files:
 
-Makefile
+CMakeLists.txt
 
-.. literalinclude:: ../../../samples/testing/integration/Makefile
-   :language: Make
+.. literalinclude:: ../../../samples/testing/integration/CMakeLists.txt
+   :language: CMake
    :linenos:
 
 sample.yaml
@@ -39,12 +39,6 @@ prj.conf
 
 .. literalinclude:: ../../../samples/testing/integration/prj.conf
    :language: text
-   :linenos:
-
-src/Makefile
-
-.. literalinclude:: ../../../samples/testing/integration/src/Makefile
-   :language: Make
    :linenos:
 
 src/main.c
@@ -75,27 +69,6 @@ In a unit test, mock objects can simulate the behavior of complex real objects
 and are used to decide whether a test failed or passed by verifying whether an
 interaction with an object occurred, and if required, to assert the order of
 that interaction.
-
-The :file:`samples/testing/unit` folder contains an example for testing
-the net-buf api of Zephyr.
-
-Makefile
-
-.. literalinclude:: ../../../samples/testing/unit/Makefile
-   :language: Make
-   :linenos:
-
-sample.yaml
-
-.. literalinclude:: ../../../samples/testing/unit/sample.yaml
-   :language: yaml
-   :linenos:
-
-main.c
-
-.. literalinclude:: ../../../samples/testing/unit/main.c
-   :language: c
-   :linenos:
 
 API reference
 *************

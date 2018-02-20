@@ -75,6 +75,9 @@
 #define EP_IS_IN(ep) (((ep) & USB_EP_DIR_MASK) == USB_EP_DIR_IN)
 #define EP_IS_OUT(ep) (((ep) & USB_EP_DIR_MASK) == USB_EP_DIR_OUT)
 
+/* Transfer completion callback */
+typedef void (*usb_dc_transfer_callback)(u8_t ep, int status, size_t tsize);
+
 /* Endpoint state */
 struct usb_dc_stm32_ep_state {
 	u16_t ep_mps;	/** Endpoint max packet size */
@@ -83,6 +86,11 @@ struct usb_dc_stm32_ep_state {
 	u8_t ep_stalled;	/** Endpoint stall flag */
 	u32_t read_count;	/** Number of bytes in read buffer  */
 	u32_t read_offset;	/** Current offset in read buffer */
+	u8_t *transfer_buf;	/** IN/OUT transfer buffer */
+	u32_t transfer_size;	/** number of bytes processed by the tranfer */
+	int transfer_result;	/** Transfer result */
+	usb_dc_transfer_callback transfer_cb;	/** Transfer callback */
+	struct k_sem transfer_sem; /** transfer boolean semaphore */
 };
 
 /* Driver state */
@@ -171,6 +179,10 @@ static int usb_dc_stm32_init(void)
 	for (i = 0; i < CONFIG_USB_DC_STM32_EP_NUM; i++) {
 		HAL_PCDEx_SetTxFiFo(&usb_dc_stm32_state.pcd, i,
 				    FIFO_EP_WORDS);
+		k_sem_init(&usb_dc_stm32_state.in_ep_state[i].transfer_sem, 1,
+			   1);
+		k_sem_init(&usb_dc_stm32_state.out_ep_state[i].transfer_sem, 1,
+			   1);
 	}
 
 	IRQ_CONNECT(STM32F4_IRQ_OTG_FS, CONFIG_USB_DC_STM32_IRQ_PRI,
@@ -241,10 +253,105 @@ int usb_dc_set_address(const u8_t addr)
 	return 0;
 }
 
+static int usb_dc_ep_transfer(const u8_t ep, u8_t *buf, size_t dlen, bool is_in,
+			      usb_dc_transfer_callback cb)
+{
+	struct usb_dc_stm32_ep_state *ep_state = usb_dc_stm32_get_ep_state(ep);
+	HAL_StatusTypeDef status;
+	int ret = 0;
+
+	SYS_LOG_DBG("ep 0x%02x, len=%d, in=%d, sync=%s", ep, dlen, is_in,
+		    cb ? "no" : "yes");
+
+	if (!dlen && !is_in) {
+		HAL_PCD_EP_Receive(&usb_dc_stm32_state.pcd, ep, NULL, 0);
+		return 0;
+	}
+
+	/* Transfer Already Ongoing ? */
+	if (k_sem_take(&ep_state->transfer_sem, K_NO_WAIT)) {
+		return -EBUSY;
+	}
+
+	ep_state->transfer_buf = buf;
+	ep_state->transfer_result = -EBUSY;
+	ep_state->transfer_size = dlen;
+	ep_state->transfer_cb = cb;
+
+	if (!k_is_in_isr()) {
+		irq_disable(STM32F4_IRQ_OTG_FS);
+	}
+
+	/* Configure and start transfer */
+	if (is_in) { /* DEV to HOST */
+		status = HAL_PCD_EP_Transmit(&usb_dc_stm32_state.pcd, ep,
+					     ep_state->transfer_buf, dlen);
+	} else { /* HOST TO DEV */
+		status = HAL_PCD_EP_Receive(&usb_dc_stm32_state.pcd, ep,
+					    ep_state->transfer_buf, dlen);
+	}
+
+	if (status != HAL_OK) {
+		SYS_LOG_ERR("ep 0x%02x, transfer error %d", ep, ret);
+		ep_state->transfer_buf = NULL;
+		ret = -EIO;
+	}
+
+	if (!k_is_in_isr()) {
+		irq_enable(STM32F4_IRQ_OTG_FS);
+	}
+
+	if (ep_state->transfer_cb || ret) { /* asynchronous transfer or error */
+		return ret;
+	}
+
+	/* Synchronous transfer */
+	if (k_sem_take(&ep_state->transfer_sem, K_FOREVER)) {
+		SYS_LOG_ERR("ep 0x%02x, transfer error", ep);
+		ep_state->transfer_buf = NULL;
+		return -ETIMEDOUT;
+	}
+
+	if (ep_state->transfer_result) { /* error < 0 */
+		ret = ep_state->transfer_result;
+	} else { /* synchronous transfer success, return processed bytes */
+		ret = ep_state->transfer_size;
+	}
+
+	k_sem_give(&ep_state->transfer_sem);
+
+	return ret;
+}
+
+static void __legacy_out_cb(u8_t ep, int status, size_t tsize)
+{
+	struct usb_dc_stm32_ep_state *ep_state = usb_dc_stm32_get_ep_state(ep);
+
+	ARG_UNUSED(status);
+
+	/* Transfer completed, data is stored in our legacy endpoint buffer */
+	ep_state->read_count = tsize;
+	ep_state->read_offset = 0;
+
+	if (ep_state->cb) {
+		ep_state->cb(ep, USB_DC_EP_DATA_OUT);
+	}
+}
+
+static void __legacy_in_cb(u8_t ep, int status, size_t tsize)
+{
+	struct usb_dc_stm32_ep_state *ep_state = usb_dc_stm32_get_ep_state(ep);
+
+	ARG_UNUSED(status);
+	ARG_UNUSED(tsize);
+
+	if (ep_state->cb) {
+		ep_state->cb(ep, USB_DC_EP_DATA_IN);
+	}
+}
+
 int usb_dc_ep_start_read(u8_t ep, u8_t *data, u32_t max_data_len)
 {
-	HAL_StatusTypeDef status;
-
 	SYS_LOG_DBG("ep 0x%02x, len %u", ep, max_data_len);
 
 	/* we flush EP0_IN by doing a 0 length receive on it */
@@ -257,16 +364,9 @@ int usb_dc_ep_start_read(u8_t ep, u8_t *data, u32_t max_data_len)
 		max_data_len = USB_OTG_FS_MAX_PACKET_SIZE;
 	}
 
-	status = HAL_PCD_EP_Receive(&usb_dc_stm32_state.pcd, ep,
-				    usb_dc_stm32_state.ep_buf[EP_IDX(ep)],
-				    max_data_len);
-	if (status != HAL_OK) {
-		SYS_LOG_ERR("HAL_PCD_EP_Receive failed(0x%02x), %d",
-			    ep, (int)status);
-		return -EIO;
-	}
-
-	return 0;
+	/* asynchronous out transfer to keep legacy behaviour */
+	return usb_dc_ep_transfer(ep, data, max_data_len, false,
+				  __legacy_out_cb);
 }
 
 int usb_dc_ep_get_read_count(u8_t ep, u32_t *read_bytes)
@@ -438,7 +538,6 @@ int usb_dc_ep_disable(const u8_t ep)
 int usb_dc_ep_write(const u8_t ep, const u8_t *const data,
 		    const u32_t data_len, u32_t * const ret_bytes)
 {
-	HAL_StatusTypeDef status;
 	int ret = 0;
 
 	SYS_LOG_DBG("ep 0x%02x, len %u", ep, data_len);
@@ -448,17 +547,14 @@ int usb_dc_ep_write(const u8_t ep, const u8_t *const data,
 		return -EINVAL;
 	}
 
-	if (!k_is_in_isr()) {
-		irq_disable(STM32F4_IRQ_OTG_FS);
-	}
-
-	status = HAL_PCD_EP_Transmit(&usb_dc_stm32_state.pcd, ep,
-				     (void *)data, data_len);
-	if (status != HAL_OK) {
-		SYS_LOG_ERR("HAL_PCD_EP_Transmit failed(0x%02x), %d",
-			    ep, (int)status);
-		ret = -EIO;
-	}
+	do {
+		/* For now we want to preserve legacy ep_write behavior.
+		 * If ep transfer fails due to ongoing transfer, try again.
+		 */
+		ret = usb_dc_ep_transfer(ep, (u8_t *)data, data_len, true,
+					 __legacy_in_cb);
+		k_yield();
+	} while (ret == -EBUSY);
 
 	if (!ret && ep == EP0_IN) {
 		/* Wait for an empty package as from the host.
@@ -467,17 +563,15 @@ int usb_dc_ep_write(const u8_t ep, const u8_t *const data,
 		usb_dc_ep_start_read(ep, NULL, 0);
 	}
 
-	if (!k_is_in_isr()) {
-		irq_enable(STM32F4_IRQ_OTG_FS);
+	if (ret_bytes) {
+		*ret_bytes = data_len;
 	}
-
-	*ret_bytes = data_len;
 
 	return ret;
 }
 
-int usb_dc_ep_read(const u8_t ep, u8_t *const data, const u32_t max_data_len,
-		   u32_t * const read_bytes)
+int usb_dc_ep_read_wait(u8_t ep, u8_t *data, u32_t max_data_len,
+			u32_t *read_bytes)
 {
 	struct usb_dc_stm32_ep_state *ep_state = usb_dc_stm32_get_ep_state(ep);
 	u32_t read_count = ep_state->read_count;
@@ -485,18 +579,39 @@ int usb_dc_ep_read(const u8_t ep, u8_t *const data, const u32_t max_data_len,
 	SYS_LOG_DBG("ep 0x%02x, %u bytes, %u+%u, %p", ep,
 		    max_data_len, ep_state->read_offset, read_count, data);
 
-	if (!max_data_len) {
-		goto done;
+	if (!EP_IS_OUT(ep)) { /* check if OUT ep */
+		SYS_LOG_ERR("Wrong endpoint direction: 0x%02x", ep);
+		return -EINVAL;
 	}
 
-	read_count = min(read_count, max_data_len);
-
-	/* Read data previously stored in the buffer */
-	if (read_count) {
+	/* When both buffer and max data to read are zero, just ingore reading
+	 * and return available data in buffer. Otherwise, return data
+	 * previously stored in the buffer.
+	 */
+	if (data) {
+		read_count = min(read_count, max_data_len);
 		memcpy(data, usb_dc_stm32_state.ep_buf[EP_IDX(ep)] +
 		       ep_state->read_offset, read_count);
 		ep_state->read_count -= read_count;
 		ep_state->read_offset += read_count;
+	} else if (max_data_len) {
+		SYS_LOG_ERR("Wrong arguments");
+	}
+
+	if (read_bytes) {
+		*read_bytes = read_count;
+	}
+
+	return 0;
+}
+
+int usb_dc_ep_read_continue(u8_t ep)
+{
+	struct usb_dc_stm32_ep_state *ep_state = usb_dc_stm32_get_ep_state(ep);
+
+	if (!EP_IS_OUT(ep)) { /* Check if OUT ep */
+		SYS_LOG_ERR("Not valid endpoint: %02x", ep);
+		return -EINVAL;
 	}
 
 	/* If no more data in the buffer, start a new read transaction.
@@ -507,9 +622,18 @@ int usb_dc_ep_read(const u8_t ep, u8_t *const data, const u32_t max_data_len,
 				     USB_OTG_FS_MAX_PACKET_SIZE);
 	}
 
-done:
-	if (read_bytes) {
-		*read_bytes = read_count;
+	return 0;
+}
+
+int usb_dc_ep_read(const u8_t ep, u8_t *const data, const u32_t max_data_len,
+		   u32_t * const read_bytes)
+{
+	if (usb_dc_ep_read_wait(ep, data, max_data_len, read_bytes) != 0) {
+		return -EINVAL;
+	}
+
+	if (usb_dc_ep_read_continue(ep) != 0) {
+		return -EINVAL;
 	}
 
 	return 0;
@@ -597,14 +721,17 @@ void HAL_PCD_DataOutStageCallback(PCD_HandleTypeDef *hpcd, u8_t epnum)
 	SYS_LOG_DBG("epnum 0x%02x, rx_count %u", epnum,
 		    HAL_PCD_EP_GetRxCount(&usb_dc_stm32_state.pcd, epnum));
 
-	/* Transaction complete, data is now stored in the buffer and ready
-	 * for the upper stack (usb_dc_ep_read to retrieve).
-	 */
-	usb_dc_ep_get_read_count(ep, &ep_state->read_count);
-	ep_state->read_offset = 0;
+	if (!ep_state->transfer_buf) { /* ignore if no transfer buffer */
+		return;
+	}
 
-	if (ep_state->cb) {
-		ep_state->cb(ep, USB_DC_EP_DATA_OUT);
+	ep_state->transfer_buf = NULL;
+	ep_state->transfer_result = 0;
+	usb_dc_ep_get_read_count(ep, &ep_state->transfer_size);
+	k_sem_give(&ep_state->transfer_sem);
+
+	if (ep_state->transfer_cb) {
+		ep_state->transfer_cb(ep, 0, ep_state->transfer_size);
 	}
 }
 
@@ -616,7 +743,15 @@ void HAL_PCD_DataInStageCallback(PCD_HandleTypeDef *hpcd, u8_t epnum)
 
 	SYS_LOG_DBG("epnum 0x%02x", epnum);
 
-	if (ep_state->cb) {
-		ep_state->cb(ep, USB_DC_EP_DATA_IN);
+	if (!ep_state->transfer_buf) { /* ignore if no transfer buffer */
+		return;
+	}
+
+	ep_state->transfer_buf = NULL;
+	ep_state->transfer_result = 0;
+	k_sem_give(&ep_state->transfer_sem);
+
+	if (ep_state->transfer_cb) {
+		ep_state->transfer_cb(ep, 0, ep_state->transfer_size);
 	}
 }

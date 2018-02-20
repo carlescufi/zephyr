@@ -4,7 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#if defined(CONFIG_NET_DEBUG_L2_IEEE802154)
+#if defined(CONFIG_NET_DEBUG_L2_IEEE802154) || \
+	defined(CONFIG_NET_DEBUG_L2_IEEE802154_DISPLAY_PACKET)
 #define SYS_LOG_DOMAIN "net/ieee802154"
 #define NET_LOG_ENABLED 1
 #endif
@@ -27,62 +28,41 @@
 #include <net/ieee802154_radio.h>
 
 #include "ieee802154_frame.h"
-#include "ieee802154_mgmt.h"
+#include "ieee802154_mgmt_priv.h"
 #include "ieee802154_security.h"
 #include "ieee802154_utils.h"
 
-#if 0
+#define PKT_TITLE      "IEEE 802.15.4 packet content:"
+#define TX_PKT_TITLE   "> " PKT_TITLE
+#define RX_PKT_TITLE   "< " PKT_TITLE
 
-#include <misc/printk.h>
+#ifdef CONFIG_NET_DEBUG_L2_IEEE802154_DISPLAY_PACKET
 
-static inline void hexdump(u8_t *pkt, u16_t length, u8_t reserve)
+#include "net_private.h"
+
+static inline void pkt_hexdump(const char *title, struct net_pkt *pkt,
+			       bool in, bool full)
 {
-	int i;
+	if ((IS_ENABLED(CONFIG_NET_DEBUG_L2_IEEE802154_DISPLAY_PACKET_RX) ||
+	     IS_ENABLED(CONFIG_NET_DEBUG_L2_IEEE802154_DISPLAY_PACKET_FULL)) &&
+	    in) {
+		net_hexdump_frags(title, pkt, full);
+	}
 
-	for (i = 0; i < length;) {
-		int j;
-
-		printk("\t");
-
-		for (j = 0; j < 10 && i < length; j++, i++) {
-#if defined(CONFIG_SYS_LOG_SHOW_COLOR)
-			if (i < reserve && reserve) {
-				printk(SYS_LOG_COLOR_YELLOW);
-			} else {
-				printk(SYS_LOG_COLOR_OFF);
-			}
-#endif
-			printk("%02x ", *pkt++);
-		}
-
-#if defined(CONFIG_SYS_LOG_SHOW_COLOR)
-		if (i < reserve) {
-			printk(SYS_LOG_COLOR_OFF);
-		}
-#endif
-		printk("\n");
+	if ((IS_ENABLED(CONFIG_NET_DEBUG_L2_IEEE802154_DISPLAY_PACKET_TX) ||
+	     IS_ENABLED(CONFIG_NET_DEBUG_L2_IEEE802154_DISPLAY_PACKET_FULL)) &&
+	    !in) {
+		net_hexdump_frags(title, pkt, full);
 	}
 }
 
-static void pkt_hexdump(struct net_pkt *pkt, bool each_frag_reserve)
-{
-	u16_t reserve = each_frag_reserve ? net_pkt_ll_reserve(pkt) : 0;
-	struct net_buf *frag;
+#ifndef CONFIG_NET_DEBUG_L2_IEEE802154
+#undef NET_LOG_ENABLED
+#endif /* CONFIG_NET_DEBUG_L2_IEEE802154 */
 
-	printk("IEEE 802.15.4 packet content:\n");
-
-	frag = pkt->frags;
-	while (frag) {
-		hexdump(each_frag_reserve ?
-			frag->data - reserve : frag->data,
-			frag->len + reserve, reserve);
-
-		frag = frag->frags;
-	}
-}
 #else
 #define pkt_hexdump(...)
-#endif
+#endif /* CONFIG_NET_DEBUG_L2_IEEE802154_DISPLAY_PACKET */
 
 #ifdef CONFIG_NET_L2_IEEE802154_ACK_REPLY
 static inline void ieee802154_acknowledge(struct net_if *iface,
@@ -105,12 +85,9 @@ static inline void ieee802154_acknowledge(struct net_if *iface,
 	net_pkt_frag_insert(pkt, frag);
 
 	if (ieee802154_create_ack_frame(iface, pkt, mpdu->mhr.fs->sequence)) {
-		const struct ieee802154_radio_api *radio =
-			iface->dev->driver_api;
-
 		net_buf_add(frag, IEEE802154_ACK_PKT_LENGTH);
 
-		radio->tx(iface->dev, pkt, frag);
+		ieee802154_tx(iface, pkt, frag);
 	}
 
 	net_pkt_unref(pkt);
@@ -180,7 +157,7 @@ enum net_verdict ieee802154_manage_recv_packet(struct net_if *iface,
 
 #ifdef CONFIG_NET_L2_IEEE802154_FRAGMENT
 	verdict = ieee802154_reassemble(pkt);
-	if (verdict == NET_DROP) {
+	if (verdict != NET_CONTINUE) {
 		goto out;
 	}
 #else
@@ -193,7 +170,7 @@ enum net_verdict ieee802154_manage_recv_packet(struct net_if *iface,
 	net_pkt_ll_src(pkt)->addr = src ? net_pkt_ll(pkt) + src : NULL;
 	net_pkt_ll_dst(pkt)->addr = dst ? net_pkt_ll(pkt) + dst : NULL;
 
-	pkt_hexdump(pkt, false);
+	pkt_hexdump(RX_PKT_TITLE, pkt, true, false);
 out:
 	return verdict;
 }
@@ -203,7 +180,7 @@ static inline bool ieee802154_manage_send_packet(struct net_if *iface,
 {
 	bool ret;
 
-	pkt_hexdump(pkt, false);
+	pkt_hexdump(TX_PKT_TITLE " (before 6lo)", pkt, false, false);
 
 #ifdef CONFIG_NET_L2_IEEE802154_FRAGMENT
 	ret = net_6lo_compress(pkt, true, ieee802154_fragment);
@@ -211,7 +188,7 @@ static inline bool ieee802154_manage_send_packet(struct net_if *iface,
 	ret = net_6lo_compress(pkt, true, NULL);
 #endif
 
-	pkt_hexdump(pkt, false);
+	pkt_hexdump(TX_PKT_TITLE " (after 6lo)", pkt, false, false);
 
 	return ret;
 }
@@ -263,7 +240,7 @@ static enum net_verdict ieee802154_recv(struct net_if *iface,
 		return NET_DROP;
 	}
 
-	pkt_hexdump(pkt, true);
+	pkt_hexdump(RX_PKT_TITLE " (with ll)", pkt, true, true);
 
 	return ieee802154_manage_recv_packet(iface, pkt);
 }
@@ -299,7 +276,7 @@ static enum net_verdict ieee802154_send(struct net_if *iface,
 		frag = frag->frags;
 	}
 
-	pkt_hexdump(pkt, true);
+	pkt_hexdump(TX_PKT_TITLE " (with ll)", pkt, false, true);
 
 	net_if_queue_tx(iface, pkt);
 
@@ -311,17 +288,37 @@ static u16_t ieee802154_reserve(struct net_if *iface, void *data)
 	return ieee802154_compute_header_size(iface, (struct in6_addr *)data);
 }
 
+static int ieee802154_enable(struct net_if *iface, bool state)
+{
+	struct ieee802154_context *ctx = net_if_l2_data(iface);
+
+	NET_DBG("iface %p %s", iface, state ? "up" : "down");
+
+	if (ctx->channel == IEEE802154_NO_CHANNEL) {
+		return -ENETDOWN;
+	}
+
+	if (state) {
+		return ieee802154_start(iface);
+	}
+
+	return ieee802154_stop(iface);
+}
+
 NET_L2_INIT(IEEE802154_L2,
-	    ieee802154_recv, ieee802154_send, ieee802154_reserve, NULL);
+	    ieee802154_recv, ieee802154_send,
+	    ieee802154_reserve, ieee802154_enable);
 
 void ieee802154_init(struct net_if *iface)
 {
 	struct ieee802154_context *ctx = net_if_l2_data(iface);
-	const struct ieee802154_radio_api *radio = iface->dev->driver_api;
 	const u8_t *mac = iface->link_addr.addr;
+	s16_t tx_power = CONFIG_NET_L2_IEEE802154_RADIO_DFLT_TX_POWER;
 	u8_t long_addr[8];
 
 	NET_DBG("Initializing IEEE 802.15.4 stack on iface %p", iface);
+
+	ctx->channel = IEEE802154_NO_CHANNEL;
 
 	ieee802154_mgmt_init(iface);
 
@@ -335,10 +332,7 @@ void ieee802154_init(struct net_if *iface)
 	memcpy(ctx->ext_addr, long_addr, 8);
 	ieee802154_filter_ieee_addr(iface, ctx->ext_addr);
 
-	if (!radio->set_txpower(iface->dev,
-				CONFIG_NET_L2_IEEE802154_RADIO_DFLT_TX_POWER)) {
-		ctx->tx_power = CONFIG_NET_L2_IEEE802154_RADIO_DFLT_TX_POWER;
+	if (!ieee802154_set_tx_power(iface, tx_power)) {
+		ctx->tx_power = tx_power;
 	}
-
-	radio->start(iface->dev);
 }

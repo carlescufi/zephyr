@@ -6,8 +6,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#if !defined(NODE_ADDR)
+#define NODE_ADDR 0x0b0c
+#endif
+
 void board_button_1_pressed(void);
-bool board_toggle_relay(void);
+u16_t board_set_target(void);
 void board_play(const char *str);
 
 #if defined(CONFIG_BOARD_BBC_MICROBIT)
@@ -20,7 +24,7 @@ void board_attention(bool attention);
 #else
 static inline void board_init(u16_t *addr, u32_t *seq)
 {
-	*addr = 0x0b0c;
+	*addr = NODE_ADDR;
 	*seq = 0;
 }
 

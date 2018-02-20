@@ -128,12 +128,14 @@ static void button_pressed(struct device *dev, struct gpio_callback *cb,
 	if (pins & BIT(SW0_GPIO_PIN)) {
 		k_work_submit(&button_work);
 	} else {
-		if (board_toggle_relay()) {
-			mb_display_print(disp, MB_DISPLAY_MODE_DEFAULT,
-					 SCROLL_SPEED, "R on");
+		u16_t target = board_set_target();
+
+		if (target > 0x0009) {
+			mb_display_print(disp, MB_DISPLAY_MODE_SINGLE,
+					 K_SECONDS(2), "A");
 		} else {
-			mb_display_print(disp, MB_DISPLAY_MODE_DEFAULT,
-					 SCROLL_SPEED, "R off");
+			mb_display_print(disp, MB_DISPLAY_MODE_SINGLE,
+					 K_SECONDS(2), "%X", (target & 0xf));
 		}
 	}
 }
@@ -327,7 +329,7 @@ void board_init(u16_t *addr, u32_t *seq)
 
 	printk("SEQ_PAGE 0x%08x\n", SEQ_PAGE);
 
-	nvm = device_get_binding(CONFIG_SOC_FLASH_NRF5_DEV_NAME);
+	nvm = device_get_binding(FLASH_DEV_NAME);
 	pwm = device_get_binding(CONFIG_PWM_NRF5_SW_0_DEV_NAME);
 
 	*addr = NRF_UICR->CUSTOMER[0];
