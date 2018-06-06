@@ -223,7 +223,7 @@ SECTIONS
 		. = ALIGN(4);
 		_image_ram_start = .;
 		_app_smem_start = .;
-#if defined(CONFIG_MPU_REQUIRES_POWER_OF_TWO_ALIGNMENT) && defined(CONFIG_APP_SHARED_MEM)
+#if defined(CONFIG_MPU_REQUIRES_POWER_OF_TWO_ALIGNMENT)
 		#include <app_smem.ld>
 #else
 		APP_SMEM_SECTION()

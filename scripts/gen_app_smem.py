@@ -44,16 +44,18 @@ def build_linker_section(filename, regionSizes):
     with open(filename, 'w') as f:
         f.write(app_smem)
         for part in partitions:
+            psize = "0"
             if (part.endswith("b")):
                 continue
             for partition, size in regionSizes:
                 if (partition == str(part).strip("b'")):
                     f.write("\t\t. = ALIGN(" + size + ");\n");
+                    psize = size
             f.write("\t\t" + str(part).strip("b'") + " = .;\n")
             f.write("\t\t*(SORT(" + str(part).strip("b'") + "*))\n")
             f.write("\t\t. = ALIGN(_app_data_align);\n")
             f.write("\t\t" + str(part).strip("b'") + "b_end = .;\n")
-            f.write("\t\t. = ALIGN(1 << LOG2CEIL(" + str(part).strip("b'") + "b_end - " + str(part).strip("b'") + "));\n")
+            f.write("\t\t. = ALIGN(" + psize + ");\n")
 
 
 def find_variables(filename):
