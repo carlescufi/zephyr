@@ -71,8 +71,8 @@ struct app_region {
 	extern char *data_smem_##name##b; \
 	_app_dmem_pad(name) char name##_dmem_pad; \
 	_app_bmem_pad(name) char name##_bmem_pad; \
-	struct k_mem_partition mem_domain_##name; \
-	struct app_region name; \
+	__kernel struct k_mem_partition mem_domain_##name; \
+	__kernel struct app_region name; \
 	static inline void init_part_##name(void) \
 	{ \
 		name.dmem_start = (char *)&data_smem_##name; \
@@ -90,7 +90,7 @@ struct app_region {
  * types (i.e. app_region, k_mem_domain, etc).
  */
 #define app_mem_domain(name) \
-	struct k_mem_domain domain_##name; \
+	__kernel struct k_mem_domain domain_##name; \
 	static inline void add_thread_##name(k_tid_t thread) \
 	{ \
 		k_mem_domain_add_thread(&domain_##name, thread); \
