@@ -2355,6 +2355,8 @@ isr_rx_conn_pkt_ctrl_rej(struct radio_pdu_node_rx *node_rx, u8_t *rx_enqueue)
 }
 
 #if defined(CONFIG_BT_CTLR_DATA_LENGTH)
+static u8_t log[62];
+static u8_t index;
 static inline u8_t isr_rx_conn_pkt_ctrl_dle(struct pdu_data *pdu_data_rx,
 					    u8_t *rx_enqueue)
 {
@@ -2371,6 +2373,7 @@ static inline u8_t isr_rx_conn_pkt_ctrl_dle(struct pdu_data *pdu_data_rx,
 	if (pdu_data_rx->llctrl.opcode == PDU_DATA_LLCTRL_TYPE_LENGTH_REQ) {
 		node_tx = mem_acquire(&_radio.pkt_tx_ctrl_free);
 		if (!node_tx) {
+			log[index++] = 1;
 			return 1;
 		}
 	}
@@ -2476,6 +2479,8 @@ static inline u8_t isr_rx_conn_pkt_ctrl_dle(struct pdu_data *pdu_data_rx,
 			LL_ASSERT(free_count_rx <= 0xFF);
 
 			if (_radio.packet_rx_data_count == free_count_rx) {
+				log[index++] = 2;
+
 				/* trigger or retain the ctrl procedure so as
 				 * to resize the rx buffers.
 				 */
@@ -2520,6 +2525,7 @@ static inline u8_t isr_rx_conn_pkt_ctrl_dle(struct pdu_data *pdu_data_rx,
 				 */
 				_radio.state = STATE_CLOSE;
 			} else {
+				log[index++] = 3;
 				nack = 1U;
 			}
 		} else {
@@ -2535,8 +2541,10 @@ static inline u8_t isr_rx_conn_pkt_ctrl_dle(struct pdu_data *pdu_data_rx,
 			    eff_rx_time == _radio.conn_curr->max_rx_time &&
 #endif /* CONFIG_BT_CTLR_PHY */
 			    (1)) {
+				log[index++] = 4;
 				goto send_length_resp;
 			}
+			log[index++] = 5;
 
 #if defined(CONFIG_BT_CTLR_PHY)
 			/* accept the effective rx time */
@@ -2596,6 +2604,7 @@ static inline u8_t isr_rx_conn_pkt_ctrl_dle(struct pdu_data *pdu_data_rx,
 			*rx_enqueue = 1U;
 		}
 	} else {
+		log[index++] = 6;
 		/* Drop response with no Local initiated request. */
 		LL_ASSERT(pdu_data_rx->llctrl.opcode ==
 			  PDU_DATA_LLCTRL_TYPE_LENGTH_RSP);
@@ -2604,8 +2613,10 @@ static inline u8_t isr_rx_conn_pkt_ctrl_dle(struct pdu_data *pdu_data_rx,
 send_length_resp:
 	if (node_tx) {
 		if (nack) {
+			log[index++] = 7;
 			mem_release(node_tx, &_radio.pkt_tx_ctrl_free);
 		} else {
+			log[index++] = 8;
 #if !defined(CONFIG_BT_CTLR_PHY)
 			length_resp_send(_radio.conn_curr, node_tx,
 					 eff_rx_octets, eff_tx_octets);
@@ -2616,6 +2627,7 @@ send_length_resp:
 #endif /* CONFIG_BT_CTLR_PHY */
 		}
 	}
+	log[index++] = 9;
 
 	return nack;
 }
@@ -4521,6 +4533,15 @@ static inline void isr_close_conn(void)
 	u8_t reason_peer;
 	u16_t lazy;
 	u8_t force;
+
+#if defined(CONFIG_BT_CTLR_DATA_LENGTH)
+	printk("\n(%u): ", _radio.conn_curr->event_counter);
+	for (u8_t i = 0; i < index; i++) {
+		printk("%u, ", log[i]);
+	}
+	printk("\n");
+	index = 0;
+#endif
 
 	/* Local initiated terminate happened */
 	if (_radio.conn_curr == 0) {

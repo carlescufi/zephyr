@@ -2106,6 +2106,7 @@ struct bt_conn *bt_conn_create_le(const bt_addr_le_t *peer,
 		return NULL;
 	}
 
+	#if 1
 	conn = bt_conn_lookup_addr_le(BT_ID_DEFAULT, peer);
 	if (conn) {
 		switch (conn->state) {
@@ -2123,6 +2124,7 @@ struct bt_conn *bt_conn_create_le(const bt_addr_le_t *peer,
 			return NULL;
 		}
 	}
+	#endif
 
 	if (peer->type == BT_ADDR_LE_PUBLIC_ID ||
 	    peer->type == BT_ADDR_LE_RANDOM_ID) {

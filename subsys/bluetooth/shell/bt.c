@@ -463,8 +463,8 @@ static int cmd_active_scan_on(const struct shell *shell, u8_t filter)
 	struct bt_le_scan_param param = {
 			.type       = BT_HCI_LE_SCAN_ACTIVE,
 			.filter_dup = BT_HCI_LE_SCAN_FILTER_DUP_ENABLE,
-			.interval   = BT_GAP_SCAN_FAST_INTERVAL,
-			.window     = BT_GAP_SCAN_FAST_WINDOW };
+			.interval   = 0x04,
+			.window     = 0x04 };
 
 	param.filter_dup = filter;
 
@@ -485,8 +485,8 @@ static int cmd_passive_scan_on(const struct shell *shell, u8_t filter)
 	struct bt_le_scan_param param = {
 			.type       = BT_HCI_LE_SCAN_PASSIVE,
 			.filter_dup = BT_HCI_LE_SCAN_FILTER_DUP_DISABLE,
-			.interval   = 0x10,
-			.window     = 0x10 };
+			.interval   = 0x04,
+			.window     = 0x04 };
 	int err;
 
 	param.filter_dup = filter;
@@ -674,6 +674,9 @@ static int cmd_directed_adv(const struct shell *shell,
 
 #if defined(CONFIG_BT_CONN)
 #if defined(CONFIG_BT_CENTRAL)
+
+#define BT_LE_CONN_PARAM_CUSTOM  BT_LE_CONN_PARAM(6, 6, 0, 400)
+
 static int cmd_connect_le(const struct shell *shell, size_t argc, char *argv[])
 {
 	int err;
@@ -686,7 +689,7 @@ static int cmd_connect_le(const struct shell *shell, size_t argc, char *argv[])
 		return err;
 	}
 
-	conn = bt_conn_create_le(&addr, BT_LE_CONN_PARAM_DEFAULT);
+	conn = bt_conn_create_le(&addr, BT_LE_CONN_PARAM_CUSTOM);
 
 	if (!conn) {
 		shell_error(shell, "Connection failed");

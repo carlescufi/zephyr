@@ -1361,8 +1361,8 @@ static void le_data_len_change(struct net_buf *buf)
 		return;
 	}
 
-	BT_DBG("max. tx: %u (%uus), max. rx: %u (%uus)", max_tx_octets,
-	       max_tx_time, max_rx_octets, max_rx_time);
+	BT_INFO("Data Length (0x%x): max. tx: %u (%uus), max. rx: %u (%uus)",
+		handle, max_tx_octets, max_tx_time, max_rx_octets, max_rx_time);
 
 	/* TODO use those */
 
@@ -1383,8 +1383,8 @@ static void le_phy_update_complete(struct net_buf *buf)
 		return;
 	}
 
-	BT_DBG("PHY updated: status: 0x%02x, tx: %u, rx: %u",
-	       evt->status, evt->tx_phy, evt->rx_phy);
+	BT_INFO("PHY updated (0x%x): status: 0x%02x, tx: %u, rx: %u",
+		handle, evt->status, evt->tx_phy, evt->rx_phy);
 
 	if (!IS_ENABLED(CONFIG_BT_AUTO_PHY_UPDATE) ||
 	    !atomic_test_and_clear_bit(conn->flags, BT_CONN_AUTO_PHY_UPDATE)) {

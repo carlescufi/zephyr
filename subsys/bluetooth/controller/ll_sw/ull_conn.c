@@ -1434,16 +1434,25 @@ struct ll_conn *ull_conn_tx_ack(u16_t handle, memq_link_t *link,
 
 		/* release mem if points to itself */
 		if (link->next == (void *)tx) {
-
 			LL_ASSERT(link->next);
 
 			mem_release(tx, &mem_conn_tx_ctrl.free);
+
+			if (0) {
+				printk("<<<%u\n", pdu_tx->llctrl.opcode);
+			}
+
 			return conn;
 		} else if (!tx) {
 			return conn;
 		} else {
 			LL_ASSERT(!link->next);
 		}
+
+		if (0) {
+			printk("!!!%u\n", pdu_tx->llctrl.opcode);
+		}
+
 	} else if (handle != 0xFFFF) {
 		conn = ll_conn_get(handle);
 	} else {
@@ -1451,6 +1460,10 @@ struct ll_conn *ull_conn_tx_ack(u16_t handle, memq_link_t *link,
 	}
 
 	ll_tx_ack_put(handle, tx);
+
+	if (0) {
+		printk("<<<D\n");
+	}
 
 	return conn;
 }
@@ -1891,6 +1904,13 @@ static inline void ctrl_tx_pause_enqueue(struct ll_conn *conn,
 	/* Update last pointer if ctrl added at end of tx list */
 	if (!tx->next) {
 		conn->tx_data_last = tx;
+	}
+
+	if (0) {
+		struct pdu_data *p;
+
+		p = (void *)tx->pdu;
+		printk("  <%u\n", p->llctrl.opcode);
 	}
 }
 
@@ -5123,6 +5143,10 @@ static inline int ctrl_rx(memq_link_t *link, struct node_rx_pdu **rx,
 	u8_t opcode;
 
 	opcode = pdu_rx->llctrl.opcode;
+
+	if (0) {
+		printk(">%u\n", opcode);
+	}
 
 #if defined(CONFIG_BT_CTLR_LE_ENC)
 	/* FIXME: do check in individual case to reduce CPU time */
