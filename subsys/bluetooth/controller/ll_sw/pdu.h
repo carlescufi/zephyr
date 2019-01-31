@@ -505,6 +505,7 @@ struct profile {
 	u8_t cur;
 	u8_t min;
 	u8_t max;
+	u8_t tifs;
 } __packed;
 #endif /* CONFIG_BT_CTLR_PROFILE_ISR */
 

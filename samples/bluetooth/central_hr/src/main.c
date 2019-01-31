@@ -310,6 +310,8 @@ static void connected(struct bt_conn *conn, u8_t conn_err)
 
 	printk("Connected: %s\n", addr);
 
+	NRF_GPIO->OUTCLR = BIT(20);
+
 	#if 0
 	err = scan_start();
 	if (err) {
@@ -348,6 +350,8 @@ static void disconnected(struct bt_conn *conn, u8_t reason)
 	g_conn = NULL;
 
 	bt_conn_unref(conn);
+
+	NRF_GPIO->OUTSET = BIT(20);
 
 	err = scan_start();
 	if (err) {
@@ -396,6 +400,10 @@ void main(void)
 	printk("Bluetooth initialized\n");
 
 	bt_conn_cb_register(&conn_callbacks);
+
+	NRF_GPIO->DIRSET = BIT(18) | BIT(20);
+	NRF_GPIO->OUTCLR = BIT(18);
+	NRF_GPIO->OUTSET = BIT(20);
 
 	err = scan_start();
 	if (err) {
