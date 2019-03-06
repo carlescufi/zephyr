@@ -3,7 +3,7 @@
 *                        The Embedded Experts                        *
 **********************************************************************
 *                                                                    *
-*       (c) 2015 - 2017  SEGGER Microcontroller GmbH & Co. KG        *
+*            (c) 1995 - 2019 SEGGER Microcontroller GmbH             *
 *                                                                    *
 *       www.segger.com     Support: support@segger.com               *
 *                                                                    *
@@ -52,14 +52,14 @@
 *                                                                    *
 **********************************************************************
 *                                                                    *
-*       SystemView version: V2.42                                    *
+*       SystemView version: V2.52f                                    *
 *                                                                    *
 **********************************************************************
 -------------------------- END-OF-HEADER -----------------------------
 File    : SEGGER_SYSVIEW_ConfDefaults.h
 Purpose : Defines defaults for configurable defines used in
           SEGGER SystemView.
-Revision: $Rev: 3734 $
+Revision: $Rev: 12706 $
 */
 
 #ifndef SEGGER_SYSVIEW_CONFDEFAULTS_H
@@ -137,6 +137,10 @@ extern "C" {
 
 #ifndef   SEGGER_SYSVIEW_MAX_STRING_LEN
   #define SEGGER_SYSVIEW_MAX_STRING_LEN     128
+#endif
+
+#ifndef   SEGGER_SYSVIEW_PRINTF_IMPLICIT_FORMAT
+  #define SEGGER_SYSVIEW_PRINTF_IMPLICIT_FORMAT 0
 #endif
 
 // Use a static buffer instead of a buffer on the stack for packets
