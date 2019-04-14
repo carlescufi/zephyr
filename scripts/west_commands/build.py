@@ -7,6 +7,7 @@ import os
 
 from west import log
 from west import cmake
+from west.configuration import config
 from west.build import DEFAULT_CMAKE_GENERATOR, is_zephyr_build
 
 from zephyr_ext_common import find_build_dir, Forceable, BUILD_DIR_DESCRIPTION
@@ -89,7 +90,7 @@ class Build(Forceable):
             formatter_class=argparse.RawDescriptionHelpFormatter,
             description=self.description,
             usage='''west build [-h] [-b BOARD] [-d BUILD_DIR]
-                  [-t TARGET] [-c] [-f] [source_dir]
+                  [-t TARGET] [-p] [-c] [-f] [source_dir]
                   -- [cmake_opt [cmake_opt ...]]''')
 
         # Remember to update scripts/west-completion.bash if you add or remove
@@ -106,6 +107,12 @@ class Build(Forceable):
         parser.add_argument('-t', '--target',
                             help='''Override the build system target (e.g.
                             'clean', 'pristine', etc.)''')
+        parser.add_argument('-p', '--pristine', action='store_true',
+                            help='''Run the pristine target before building if
+                            a build system is present in the build dir.
+                            This allows for reusing a build folder even if it
+                            contains build files for a different board or
+                            application.''')
         parser.add_argument('-c', '--cmake', action='store_true',
                             help='Force CMake to run')
         self.add_force_arg(parser)
@@ -128,9 +135,14 @@ class Build(Forceable):
         self._sanity_precheck()
         self._setup_build_dir()
         if is_zephyr_build(self.build_dir):
-            self._update_cache()
-            if self.args.cmake or self.args.cmake_opts:
+            if self.args.pristine:
+                log.inf('Making build dir {} pristine'.format(self.build_dir))
+                self._run_build('pristine')
                 self.run_cmake = True
+            else:
+                self._update_cache()
+                if self.args.cmake or self.args.cmake_opts:
+                    self.run_cmake = True
         else:
             self.run_cmake = True
         self._setup_source_dir()
@@ -154,8 +166,7 @@ class Build(Forceable):
         self._sanity_check()
         self._update_cache()
 
-        extra_args = ['--target', args.target] if args.target else []
-        cmake.run_build(self.build_dir, extra_args=extra_args)
+        self._run_build(args.target)
 
     def _parse_remainder(self, remainder):
         self.args.source_dir = None
@@ -270,8 +281,8 @@ class Build(Forceable):
         self.check_force(
             not apps_mismatched,
             'Build directory "{}" is for application "{}", but source '
-            'directory "{}" was specified; please clean it or use --build-dir '
-            'to set another build directory'.
+            'directory "{}" was specified; please clean it, use --pristine, '
+            'or use --build-dir to set another build directory'.
             format(self.build_dir, cached_abs, source_abs))
         if apps_mismatched:
             self.run_cmake = True  # If they insist, we need to re-run cmake.
@@ -289,8 +300,8 @@ class Build(Forceable):
         self.check_force(
             not boards_mismatched,
             'Build directory {} targets board {}, but board {} was specified. '
-            '(Clean the directory or use --build-dir to specify a different '
-            'one.)'.
+            '(Clean the directory, use --pristine, or use --build-dir to '
+            'specify a different one.)'.
             format(self.build_dir, cached_board, self.args.board))
 
     def _run_cmake(self, cmake_opts):
@@ -312,3 +323,7 @@ class Build(Forceable):
         if cmake_opts:
             final_cmake_args.extend(cmake_opts)
         cmake.run_cmake(final_cmake_args)
+
+    def _run_build(self, target):
+        extra_args = ['--target', target] if target else []
+        cmake.run_build(self.build_dir, extra_args=extra_args)
