@@ -237,10 +237,7 @@ class Build(Forceable):
             source_dir = os.getcwd()
         self.source_dir = os.path.abspath(source_dir)
 
-    def _sanity_check(self):
-        # Sanity check the build configuration.
-        # Side effect: may update cmake_cache attribute.
-        log.dbg('sanity checking the build', level=log.VERBOSE_EXTREME)
+    def _sanity_check_source_dir(self):
         if self.source_dir == self.build_dir:
             # There's no forcing this.
             log.die('source and build directory {} cannot be the same; '
@@ -260,6 +257,13 @@ class Build(Forceable):
             'want to build? (Use -s SOURCE_DIR to specify '
             'the application source directory)'.
             format(srcrel=srcrel))
+
+    def _sanity_check(self):
+        # Sanity check the build configuration.
+        # Side effect: may update cmake_cache attribute.
+        log.dbg('sanity checking the build', level=log.VERBOSE_EXTREME)
+        self._sanity_check_source_dir()
+
         self.check_force(
             is_zephyr_build(self.build_dir) or self.args.board,
             'this looks like a new or clean build, please provide --board')
@@ -274,12 +278,16 @@ class Build(Forceable):
                       if self.args.source_dir else None)
         cached_abs = os.path.abspath(cached_app) if cached_app else None
 
+        # Load the auto-pristine configuration value
+        pristine = config.getboolean('build', 'auto-pristine',
+                                     fallback=False)
+        log.dbg('auto-pristine:', pristine, level=log.VERBOSE_EXTREME)
         # If the build directory specifies a source app, make sure it's
         # consistent with --source-dir.
         apps_mismatched = (source_abs and cached_abs and
                            source_abs != cached_abs)
         self.check_force(
-            not apps_mismatched,
+            not apps_mismatched or pristine,
             'Build directory "{}" is for application "{}", but source '
             'directory "{}" was specified; please clean it, use --pristine, '
             'or use --build-dir to set another build directory'.
@@ -291,18 +299,38 @@ class Build(Forceable):
         # command line.
         cached_board = self.cmake_cache.get('CACHED_BOARD')
         log.dbg('CACHED_BOARD:', cached_board, level=log.VERBOSE_EXTREME)
-        self.check_force(cached_board or self.args.board,
+        # If app_mismatched and pristine are true we will run pristine on the
+        # build, invalidating the cached board. Whenever we run pristine we
+        # require the user to provide all the require inputs again.
+        self.check_force((cached_board and not (apps_mismatched and pristine))
+                         or self.args.board,
                          'Cached board not defined, please provide --board')
 
         # Check consistency between cached board and --board.
         boards_mismatched = (self.args.board and cached_board and
                              self.args.board != cached_board)
         self.check_force(
-            not boards_mismatched,
+            not boards_mismatched or pristine,
             'Build directory {} targets board {}, but board {} was specified. '
             '(Clean the directory, use --pristine, or use --build-dir to '
             'specify a different one.)'.
             format(self.build_dir, cached_board, self.args.board))
+
+        if pristine and (apps_mismatched or boards_mismatched):
+            log.inf('Making build dir {} pristine'.format(self.build_dir))
+            self._run_build('pristine')
+            self.cmake_cache = None
+            log.dbg('run_cmake:', True, level=log.VERBOSE_EXTREME)
+            self.run_cmake = True
+
+            # Tricky coner-case: The user has not specified a build folder but
+            # there was one in the CMake cache. Since this is going to be
+            # invalidated, reset to CWD and re-run the basic tests.
+            if((boards_mismatched and not apps_mismatched) and
+               (not source_abs and cached_abs)):
+                self._setup_source_dir()
+                self._sanity_check_source_dir()
+
 
     def _run_cmake(self, cmake_opts):
         if not self.run_cmake:
