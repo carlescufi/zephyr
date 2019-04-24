@@ -388,8 +388,6 @@ static void connected(struct bt_conn *conn, u8_t err)
 		return;
 	}
 
-	NRF_GPIO->OUTCLR = BIT(20);
-
 	printk("Connected: %s\n", addr);
 
 	g_conn = bt_conn_ref(conn);
@@ -399,7 +397,6 @@ static void connected(struct bt_conn *conn, u8_t err)
 
 static void disconnected(struct bt_conn *conn, u8_t reason)
 {
-	NRF_GPIO->OUTSET = BIT(20);
 	printk("Disconnected (reason 0x%02x)\n", reason);
 
 	g_conn = NULL;
@@ -532,10 +529,6 @@ void main(void)
 
 	bt_conn_cb_register(&conn_callbacks);
 	bt_conn_auth_cb_register(&auth_cb_display);
-
-	NRF_GPIO->DIRSET = BIT(18) | BIT(20);
-	NRF_GPIO->OUTCLR = BIT(18);
-	NRF_GPIO->OUTSET = BIT(20);
 
 	/* Implement notification. At the moment there is no suitable way
 	 * of starting delayed work so we do it here

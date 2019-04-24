@@ -3106,14 +3106,13 @@ static void encode_control(struct node_rx_pdu *node_rx,
 
 #if defined(CONFIG_BT_CTLR_PROFILE_ISR)
 	case NODE_RX_TYPE_PROFILE:
-		BT_INFO("l: %u, %u, %u; t: %u, %u, %u; tifs: %u",
+		BT_INFO("l: %d, %d, %d; t: %d, %d, %d.",
 			pdu_data->profile.lcur,
 			pdu_data->profile.lmin,
 			pdu_data->profile.lmax,
 			pdu_data->profile.cur,
 			pdu_data->profile.min,
-			pdu_data->profile.max,
-			pdu_data->profile.tifs);
+			pdu_data->profile.max);
 		return;
 #endif /* CONFIG_BT_CTLR_PROFILE_ISR */
 

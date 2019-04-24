@@ -715,7 +715,6 @@ static inline void isr_radio_state_tx(void)
 		hcto += addr_us_get(0);
 		hcto -= radio_tx_chain_delay_get(0, 0);
 
-		radio_tmr_aa_capture();
 		radio_tmr_hcto_configure(hcto);
 
 		/* capture end of CONNECT_IND PDU, used for calculating first
@@ -755,7 +754,6 @@ static inline void isr_radio_state_tx(void)
 		hcto += addr_us_get(0);
 		hcto -= radio_tx_chain_delay_get(0, 0);
 
-		radio_tmr_aa_capture();
 		radio_tmr_hcto_configure(hcto);
 		radio_rssi_measure();
 
@@ -795,7 +793,6 @@ static inline void isr_radio_state_tx(void)
 		hcto -= radio_tx_chain_delay_get(0, 0);
 #endif /* !CONFIG_BT_CTLR_PHY */
 
-		radio_tmr_aa_capture();
 		radio_tmr_hcto_configure(hcto);
 
 #if defined(CONFIG_BT_CTLR_CONN_RSSI)
@@ -3878,9 +3875,8 @@ static inline void isr_rx_conn(u8_t crc_ok, u8_t trx_done,
 	static u8_t s_lprv;
 	static u8_t s_max;
 	static u8_t s_prv;
-	static u8_t s_tifs;
 
-	u8_t latency, elapsed, prv, tifs;
+	u8_t latency, elapsed, prv;
 	u32_t radio_tmr_end = 0U;
 	u32_t sample;
 	u8_t chg = 0U;
@@ -4158,25 +4154,6 @@ isr_rx_conn_terminate_exit:
 		chg = 1U;
 	}
 
-	#if 0
-#if defined(CONFIG_BT_CTLR_PHY)
-	tifs = radio_rx_chain_delay_get(_radio.conn_curr->phy_rx, 1) -
-	       radio_tx_chain_delay_get(_radio.conn_curr->phy_tx,
-					_radio.conn_curr->phy_flags) -
-	       addr_us_get(_radio.conn_curr->phy_rx) +
-#else /* !CONFIG_BT_CTLR_PHY */
-	tifs = radio_rx_chain_delay_get(0, 0) -
-	       radio_tx_chain_delay_get(0, 0) -
-	       addr_us_get(0) +
-#endif /* !CONFIG_BT_CTLR_PHY */
-	       radio_tmr_aa_get() - radio_tmr_ready_get();
-	#endif
-	tifs = radio_tmr_aa_get() - radio_tmr_ready_get();
-	if (tifs != s_tifs) {
-		s_tifs = tifs;
-		chg = 1U;
-	}
-
 	/* generate event if any change */
 	if (chg) {
 		/* NOTE: enqueue only if rx buffer available, else ignore */
@@ -4191,7 +4168,6 @@ isr_rx_conn_terminate_exit:
 			pdu_data_rx->profile.cur = elapsed;
 			pdu_data_rx->profile.min = s_min;
 			pdu_data_rx->profile.max = s_max;
-			pdu_data_rx->profile.tifs = s_tifs;
 			packet_rx_enqueue();
 		}
 	}
