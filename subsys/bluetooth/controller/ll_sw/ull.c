@@ -288,41 +288,41 @@ int ll_init(struct k_sem *sem_rx)
 		return err;
 	}
 
-#if defined(CONFIG_BT_BROADCASTER)
-	err = lll_adv_init();
-	if (err) {
-		return err;
+	if (IS_ENABLED(CONFIG_BT_BROADCASTER)) {
+		err = lll_adv_init();
+		if (err) {
+			return err;
+		}
+
+		err = ull_adv_init();
+		if (err) {
+			return err;
+		}
 	}
 
-	err = ull_adv_init();
-	if (err) {
-		return err;
-	}
-#endif /* CONFIG_BT_BROADCASTER */
+	if (IS_ENABLED(CONFIG_BT_OBSERVER)) {
+		err = lll_scan_init();
+		if (err) {
+			return err;
+		}
 
-#if defined(CONFIG_BT_OBSERVER)
-	err = lll_scan_init();
-	if (err) {
-		return err;
-	}
-
-	err = ull_scan_init();
-	if (err) {
-		return err;
-	}
-#endif /* CONFIG_BT_OBSERVER */
-
-#if defined(CONFIG_BT_CONN)
-	err = lll_conn_init();
-	if (err) {
-		return err;
+		err = ull_scan_init();
+		if (err) {
+			return err;
+		}
 	}
 
-	err = ull_conn_init();
-	if (err) {
-		return err;
+	if (IS_ENABLED(CONFIG_BT_CONN)) {
+		err = lll_conn_init();
+		if (err) {
+			return err;
+		}
+
+		err = ull_conn_init();
+		if (err) {
+			return err;
+		}
 	}
-#endif /* CONFIG_BT_CONN */
 
 #if defined(CONFIG_BT_CTLR_USER_EXT)
 	err = ull_user_init();
