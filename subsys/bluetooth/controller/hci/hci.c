@@ -1603,6 +1603,39 @@ static void le_enh_tx_test(struct net_buf *buf, struct net_buf **evt)
 }
 #endif /* CONFIG_BT_CTLR_DTM_HCI */
 
+#if defined(CONFIG_BT_CTLR_ADV_EXT)
+static void le_set_ext_adv_param(struct net_buf *buf, struct net_buf **evt)
+{
+	struct bt_hci_cp_le_set_ext_adv_param *cmd = (void *)buf->data;
+	struct bt_hci_rp_le_set_ext_adv_param *rp;
+	u32_t min_interval;
+	u8_t adv_type = 0;
+	u16_t evt_prop;
+	u8_t tx_pwr;
+	u8_t status;
+
+	evt_prop = sys_le16_to_cpu(cmd->props);
+	min_interval = sys_get_le24(cmd->prim_min_interval);
+	tx_pwr = cmd->tx_power;
+
+	if (!(evt_prop & BIT(4))) {
+		adv_type = 0x05; /* Extending advertising */
+	}
+
+	status = ll_adv_params_set(cmd->handle, evt_prop, min_interval,
+				   adv_type, cmd->own_addr_type,
+				   cmd->peer_addr.type, cmd->peer_addr.a.val,
+				   cmd->prim_channel_map, cmd->filter_policy,
+				   &tx_pwr, cmd->prim_adv_phy,
+				   cmd->sec_adv_max_skip, cmd->sec_adv_phy,
+				   cmd->sid, cmd->scan_req_notify_enable);
+
+	rp = hci_cmd_complete(evt, sizeof(*rp));
+	rp->status = 0x00;
+	rp->tx_power= tx_pwr;
+}
+#endif /* !CONFIG_BT_CTLR_ADV_EXT */
+
 static int controller_cmd_handle(u16_t  ocf, struct net_buf *cmd,
 				 struct net_buf **evt, void **node_rx)
 {
@@ -2662,8 +2695,8 @@ static void le_adv_ext_report(struct pdu_data *pdu_data,
 	rssi = -(*extra);
 #endif /* CONFIG_BT_LL_SW_SPLIT */
 
-	BT_DBG("phy= 0x%x, type= 0x%x, len= %u, tat= %u, rat= %u, rssi=%d dB",
-	       phy, adv->type, adv->len, adv->tx_addr, adv->rx_addr, rssi);
+	BT_INFO("phy= 0x%x, type= 0x%x, len= %u, tat= %u, rat= %u, rssi=%d dB",
+	        phy, adv->type, adv->len, adv->tx_addr, adv->rx_addr, rssi);
 
 	if ((adv->type == PDU_ADV_TYPE_EXT_IND) && adv->len) {
 		struct pdu_adv_com_ext_adv *p;
@@ -2674,8 +2707,8 @@ static void le_adv_ext_report(struct pdu_data *pdu_data,
 		h = (void *)p->ext_hdr_adi_adv_data;
 		ptr = (u8_t *)h + sizeof(*h);
 
-		BT_DBG("Ext. adv mode= 0x%x, hdr len= %u", p->adv_mode,
-		       p->ext_hdr_len);
+		BT_INFO("Ext. adv mode= 0x%x, hdr len= %u", p->adv_mode,
+		        p->ext_hdr_len);
 
 		if (!p->ext_hdr_len) {
 			goto no_ext_hdr;
@@ -2688,7 +2721,7 @@ static void le_adv_ext_report(struct pdu_data *pdu_data,
 			memcpy(&addr.a.val[0], ptr, sizeof(bt_addr_t));
 			ptr += BDADDR_SIZE;
 
-			BT_DBG("AdvA: %s", bt_addr_le_str(&addr));
+			BT_INFO("AdvA: %s", bt_addr_le_str(&addr));
 		}
 
 		if (h->tx_pwr) {
@@ -2697,7 +2730,7 @@ static void le_adv_ext_report(struct pdu_data *pdu_data,
 			tx_pwr = *(s8_t *)ptr;
 			ptr++;
 
-			BT_DBG("Tx pwr= %d dB", tx_pwr);
+			BT_INFO("Tx pwr= %d dB", tx_pwr);
 		}
 
 		/* TODO: length check? */

@@ -216,6 +216,8 @@ u8_t ll_adv_params_set(u16_t interval, u8_t adv_type,
 
 		/* TODO: TargetA flag */
 
+		/* TODO: CTEInfo flag */
+
 		/* ADI flag */
 		if (_h.adi) {
 			h->adi = 1;
@@ -299,6 +301,8 @@ u8_t ll_adv_params_set(u16_t interval, u8_t adv_type,
 			adi = (void *)ptr;
 			adi->sid = sid;
 		}
+
+		/* TODO: CTEInfo field */
 
 		/* NOTE: TargetA, filled at enable and RPA timeout */
 
