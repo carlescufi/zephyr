@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
+#
+# Copyright 2019 Nordic Semiconductor ASA
 # Copyright 2018 Oticon A/S
+#
 # SPDX-License-Identifier: Apache-2.0
 
-# Basic connection test: a central connects to a peripheral and expects a
-# notification, using the split controller (ULL LLL)
-SIMULATION_ID="basic_conn_split"
+# Tests GATT MTU exchange and Data Length Extension
+SIMULATION_ID="test_dle"
 VERBOSITY_LEVEL=2
 PROCESS_IDS=""; EXIT_CODE=0
 
@@ -14,7 +16,7 @@ function Execute(){
  compile it?)\e[39m"
     exit 1
   fi
-  timeout 30 $@ & PROCESS_IDS="$PROCESS_IDS $!"
+  timeout 5 $@ & PROCESS_IDS="$PROCESS_IDS $!"
 }
 
 : "${BSIM_OUT_PATH:?BSIM_OUT_PATH must be defined}"
@@ -24,13 +26,13 @@ BOARD="${BOARD:-nrf52_bsim}"
 
 cd ${BSIM_OUT_PATH}/bin
 
-Execute ./bs_${BOARD}_tests_bluetooth_bsim_bt_bsim_test_app_prj_split_conf \
-  -v=${VERBOSITY_LEVEL} -s=${SIMULATION_ID} -d=0 -RealEncryption=1 \
-  -testid=peripheral -rs=23
+Execute ./bs_${BOARD}_tests_bluetooth_bsim_bt_bsim_test_app_prj_dle_conf \
+  -v=${VERBOSITY_LEVEL} -s=${SIMULATION_ID} -d=0 -RealEncryption=0 \
+  -testid=test_dle_peripheral -rs=23
 
-Execute ./bs_${BOARD}_tests_bluetooth_bsim_bt_bsim_test_app_prj_split_conf\
-  -v=${VERBOSITY_LEVEL} -s=${SIMULATION_ID} -d=1 -RealEncryption=1 \
-  -testid=central -rs=6
+Execute ./bs_${BOARD}_tests_bluetooth_bsim_bt_bsim_test_app_prj_dle_conf \
+  -v=${VERBOSITY_LEVEL} -s=${SIMULATION_ID} -d=1 -RealEncryption=0 \
+  -testid=test_dle_central -rs=6
 
 Execute ./bs_2G4_phy_v1 -v=${VERBOSITY_LEVEL} -s=${SIMULATION_ID} \
   -D=2 -sim_length=20e6 $@

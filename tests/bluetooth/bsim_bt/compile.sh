@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
+#
+# Copyright 2019 Nordic Semiconductor ASA
 # Copyright 2018 Oticon A/S
+#
 # SPDX-License-Identifier: Apache-2.0
 
 # Compile all the applications needed by the bsim_bt tests
@@ -51,6 +54,6 @@ function compile(){
   sed -i "1i $(wc -l ${MAP_FILE_NAME} | cut -d" " -f1)" ${MAP_FILE_NAME}
 }
 
-APP=tests/bluetooth/bsim_bt/bsim_test_app compile
-APP=tests/bluetooth/bsim_bt/bsim_test_app CONF_FILE=prj_split.conf \
-	compile
+#APP=tests/bluetooth/bsim_bt/bsim_test_app compile
+#APP=tests/bluetooth/bsim_bt/bsim_test_app CONF_FILE=prj_dle.conf compile
+APP=tests/bluetooth/bsim_bt/bsim_test_app CONF_FILE=prj_split.conf compile

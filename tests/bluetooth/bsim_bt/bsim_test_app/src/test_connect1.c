@@ -43,6 +43,12 @@ static struct bt_le_conn_param update_params = {
 };
 
 static bool encrypt_link;
+static bool conn_param_requested;
+
+static const struct bt_data ad[] = {
+	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
+	BT_DATA_BYTES(BT_DATA_UUID16_ALL, 0x0d, 0x18, 0x0f, 0x18, 0x05, 0x18),
+};
 
 /*
  * Basic connection test:
@@ -57,7 +63,7 @@ static bool encrypt_link;
  *   The thread code is mostly a copy of the central_hr sample device
  */
 
-#define WAIT_TIME 6 /*seconds*/
+#define WAIT_TIME 20 /*seconds*/
 extern enum bst_result_t bst_result;
 
 #define FAIL(...)					\
@@ -109,7 +115,7 @@ static u8_t notify_func(struct bt_conn *conn,
 
 	printk("[NOTIFICATION] data %p length %u\n", data, length);
 
-	if (notify_count++ >= 1) { /* We consider it passed */
+	if (notify_count++ >= 10) { /* We consider it passed */
 		int err;
 
 		/* Disconnect before actually passing */
@@ -192,6 +198,7 @@ static void update_conn(struct bt_conn *conn, bool bonded)
 	}
 
 	printk("Updating connection (bonded: %d)\n", bonded);
+	conn_param_requested = true;
 
 	err = bt_conn_le_param_update(conn, &update_params);
 	if (err) {
@@ -241,9 +248,10 @@ static void params_updated(struct bt_conn *conn, u16_t interval,
 	u8_t chm[5] = { 0x11, 0x22, 0x33, 0x44, 0x00 };
 	int err;
 
-	if (interval != UPDATE_PARAM_INTERVAL_MAX ||
-	    latency != UPDATE_PARAM_LATENCY ||
-	    timeout != UPDATE_PARAM_TIMEOUT) {
+	if (conn_param_requested &&
+	    (interval != UPDATE_PARAM_INTERVAL_MAX ||
+	     latency != UPDATE_PARAM_LATENCY ||
+	     timeout != UPDATE_PARAM_TIMEOUT)) {
 		FAIL("Unexpected connection parameters "
 		     "(interval: %d, latency: %d, timeout: %d)\n",
 		     interval, latency, timeout);
@@ -253,6 +261,11 @@ static void params_updated(struct bt_conn *conn, u16_t interval,
 	printk("Connection parameters updated "
 	       "(interval: %d, latency: %d, timeout: %d)\n",
 	       interval, latency, timeout);
+
+	if (conn_param_requested) {
+		conn_param_requested = false;
+		return;
+	}
 
 	err = bt_le_set_chan_map(chm);
 	if (err) {
@@ -375,13 +388,18 @@ static void test_con1_main(void)
 	bt_conn_cb_register(&conn_callbacks);
 
 	err = bt_le_scan_start(BT_LE_SCAN_ACTIVE, device_found);
-
 	if (err) {
 		FAIL("Scanning failed to start (err %d)\n", err);
 		return;
 	}
-
 	printk("Scanning successfully started\n");
+
+	err = bt_le_adv_start(BT_LE_ADV_CONN_NAME, ad, ARRAY_SIZE(ad), NULL, 0);
+	if (err) {
+		FAIL("Advertising failed to start (err %d)\n", err);
+		return;
+	}
+	printk("Advertising successfully started\n");
 }
 
 static const struct bst_test_instance test_connect[] = {

@@ -17,6 +17,7 @@ target_sources(app PRIVATE
 	src/test_empty.c
 	src/test_connect1.c
 	src/test_connect2.c
+	src/test_dle.c
 )
 
 zephyr_include_directories(

@@ -27,6 +27,10 @@
 
 #include <sys/byteorder.h>
 
+#define BT_LE_SCAN_CUSTOM BT_LE_SCAN_PARAM(BT_HCI_LE_SCAN_ACTIVE, \
+					   BT_HCI_LE_SCAN_FILTER_DUP_ENABLE, \
+					   0x04, \
+					   0x04)
 static struct bt_conn *default_conn;
 
 /*
@@ -36,7 +40,7 @@ static struct bt_conn *default_conn;
  *   The thread code is mostly a copy of the peripheral_hr sample device
  */
 
-#define WAIT_TIME 5 /*seconds*/
+#define WAIT_TIME 20 /*seconds*/
 extern enum bst_result_t bst_result;
 
 #define FAIL(...)					\
@@ -74,13 +78,51 @@ static const struct bt_data ad[] = {
 	BT_DATA_BYTES(BT_DATA_UUID16_ALL, 0x0d, 0x18, 0x0f, 0x18, 0x05, 0x18),
 };
 
+static void device_found(const bt_addr_le_t *addr, s8_t rssi, u8_t type,
+		struct net_buf_simple *ad)
+{
+	char dev[BT_ADDR_LE_STR_LEN];
+
+	bt_addr_le_to_str(addr, dev, sizeof(dev));
+	printk("[DEVICE]: %s, AD evt type %u, AD data len %u, RSSI %i\n",
+			dev, type, ad->len, rssi);
+}
+
 static void connected(struct bt_conn *conn, u8_t err)
 {
 	if (err) {
-		FAIL("Connection failed (err 0x%02x)\n", err);
+		if (err != 60) {
+			FAIL("Connection failed (err %u)\n", err);
+		}
 	} else {
+		char addr[BT_ADDR_LE_STR_LEN];
+		bt_addr_le_t peer = {
+			.type = BT_ADDR_LE_RANDOM,
+			.a = {
+				.val = {0x11, 0x22, 0x33, 0x44, 0x55, 0x66},
+			},
+		};
+
 		default_conn = bt_conn_ref(conn);
-		printk("Connected\n");
+
+		bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
+		printk("Connected: %s\n", addr);
+
+		err = bt_le_adv_stop();
+		if (err) {
+			FAIL("Adv Stop Failed\n");
+			return;
+		}
+
+		peer.a.val[0] = 0xF1;
+		peer.a.val[1] = 0xF2;
+		conn = bt_conn_create_slave_le(&peer, BT_LE_ADV_CONN_DIR);
+		if (!conn) {
+			FAIL("Directed Adv Failed\n");
+			return;
+		}
+		bt_addr_le_to_str(&peer, addr, sizeof(addr));
+		printk("Directed Adv Started to %s\n", addr);
 	}
 }
 
@@ -108,12 +150,18 @@ static void bt_ready(int err)
 
 	printk("Bluetooth initialized\n");
 
+	err = bt_le_scan_start(BT_LE_SCAN_CUSTOM, device_found);
+	if (err) {
+		FAIL("Scanning failed to start (err %d)\n", err);
+		return;
+	}
+	printk("Scanning successfully started\n");
+
 	err = bt_le_adv_start(BT_LE_ADV_CONN_NAME, ad, ARRAY_SIZE(ad), NULL, 0);
 	if (err) {
 		FAIL("Advertising failed to start (err %d)\n", err);
 		return;
 	}
-
 	printk("Advertising successfully started\n");
 }
 
