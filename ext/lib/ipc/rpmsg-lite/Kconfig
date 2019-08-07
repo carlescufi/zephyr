@@ -1,0 +1,17 @@
+#
+# Copyright (c) 2019 Linaro Limited
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+
+config RPMSG_LITE
+	bool "RPMsg-lite Support"
+	help
+	  This option enables the RPMsg-lite.
+
+config RPMSGLITE_SRC_PATH
+	string "RPMsg-lite library source path"
+	default "rpmsg-lite"
+	depends on RPMSG_LITE
+	help
+	  This option specifies the path to the source for the rpmsg-lite library

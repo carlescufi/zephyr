@@ -1,0 +1,47 @@
+RPMsg-lite_v2.2.0
+#####################
+
+Origin:
+   https://github.com/NXPmicro/rpmsg-lite
+
+Status:
+   adc38df11ac51952565682ebaaa029fb1af5e733
+
+   When we import rpmsg-lite we removed the doc and deoxygen directories
+   to reduce amount of unnecessery files imported.
+Purpose:
+   IPC layer that implements rpmsg-lite communication between cores.
+
+Description:
+
+This documentation describes the RPMsg-Lite component, which is a lightweight
+implementation of the Remote Processor Messaging (RPMsg) protocol. The RPMsg
+protocol defines a standardized binary interface used to communicate between
+multiple cores in a heterogeneous multicore system.
+
+Compared to the RPMsg implementation of the Open Asymmetric Multi Processing
+(OpenAMP) framework (https://github.com/OpenAMP/open-amp), the RPMsg-Lite offers
+a code size reduction, API simplification, and improved modularity. On smaller
+Cortex-M0+ based systems, it is recommended to use RPMsg-Lite.
+
+The RPMsg-Lite is an open-source component developed by NXP Semiconductors
+and released under the BSD-compatible license.
+
+For Further documentation, please look at doxygen documentation at:
+https://nxpmicro.github.io/rpmsg-lite/
+
+URL:
+   https://github.com/NXPmicro/rpmsg-lite
+
+commit:
+   adc38df11ac51952565682ebaaa029fb1af5e733
+
+Maintained-by:
+   NXP Semiconductor
+
+License:
+   BSD-3-Clause
+   BSD-2-Clause
+
+License Link:
+   https://github.com/NXPmicro/rpmsg-lite/blob/master/LICENSE
