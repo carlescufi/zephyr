@@ -213,12 +213,20 @@ static void identity_resolved(struct bt_conn *conn, const bt_addr_le_t *rpa,
 #endif
 
 #if defined(CONFIG_BT_SMP) || defined(CONFIG_BT_BREDR)
-static void security_changed(struct bt_conn *conn, bt_security_t level)
+static void security_changed(struct bt_conn *conn, bt_security_t level,
+			     u8_t status)
 {
 	char addr[BT_ADDR_LE_STR_LEN];
 
 	conn_addr_str(conn, addr, sizeof(addr));
-	shell_print(ctx_shell, "Security changed: %s level %u", addr, level);
+
+	if (!status) {
+		shell_print(ctx_shell, "Security changed: %s level %u", addr,
+			    level);
+	} else {
+		shell_print(ctx_shell, "Security failed: %s level %u reason %d",
+			    addr, level, status);
+	}
 }
 #endif
 

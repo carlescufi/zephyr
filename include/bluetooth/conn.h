@@ -442,8 +442,10 @@ struct bt_conn_cb {
 	 *
 	 *  @param conn Connection object.
 	 *  @param level New security level of the connection.
+	 *  @param reason Security error. Zero for success, non-zero otherwise.
 	 */
-	void (*security_changed)(struct bt_conn *conn, bt_security_t level);
+	void (*security_changed)(struct bt_conn *conn, bt_security_t level,
+				 u8_t err);
 #endif /* defined(CONFIG_BT_SMP) || defined(CONFIG_BT_BREDR) */
 	struct bt_conn_cb *_next;
 };

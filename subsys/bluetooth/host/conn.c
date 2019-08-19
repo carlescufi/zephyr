@@ -984,13 +984,13 @@ u8_t bt_conn_enc_key_size(struct bt_conn *conn)
 	return 0;
 }
 
-void bt_conn_security_changed(struct bt_conn *conn)
+void bt_conn_security_changed(struct bt_conn *conn, u8_t status)
 {
 	struct bt_conn_cb *cb;
 
 	for (cb = callback_list; cb; cb = cb->_next) {
 		if (cb->security_changed) {
-			cb->security_changed(conn, conn->sec_level);
+			cb->security_changed(conn, conn->sec_level, status);
 		}
 	}
 }
