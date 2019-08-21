@@ -146,13 +146,17 @@ static void *conn_free;
 
 static struct device *entropy;
 
+static int llacq, llrel;
+
 struct ll_conn *ll_conn_acquire(void)
 {
+	llacq++;
 	return mem_acquire(&conn_free);
 }
 
 void ll_conn_release(struct ll_conn *conn)
 {
+	llrel++;
 	mem_release(conn, &conn_free);
 }
 
