@@ -107,6 +107,7 @@ struct bt_conn {
 	bt_security_t		sec_level;
 	bt_security_t		required_sec_level;
 	u8_t			encrypt;
+	u8_t                    force_pairing;
 #endif /* CONFIG_BT_SMP || CONFIG_BT_BREDR */
 
 	/* Connection error or reason for disconnect */

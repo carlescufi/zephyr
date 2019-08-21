@@ -1058,7 +1058,8 @@ int bt_conn_security(struct bt_conn *conn, bt_security_t sec)
 		return 0;
 	}
 
-	conn->required_sec_level = sec;
+	conn->force_pairing = sec & BT_SECURITY_FORCE_PAIR;
+	conn->required_sec_level = sec & ~BT_SECURITY_FORCE_PAIR;
 
 	err = start_security(conn);
 
