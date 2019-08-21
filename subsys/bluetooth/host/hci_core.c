@@ -3239,6 +3239,7 @@ static void le_ltk_request(struct net_buf *buf)
 #endif /* !CONFIG_BT_SMP_SC_PAIR_ONLY */
 
 	le_ltk_neg_reply(evt->handle);
+	// bt_conn_security_changed(conn, BT_HCI_ERR_PIN_OR_KEY_MISSING);
 
 done:
 	bt_conn_unref(conn);

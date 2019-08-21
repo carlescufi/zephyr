@@ -114,7 +114,7 @@ struct bt_keys *bt_keys_get_type(int type, u8_t id, const bt_addr_le_t *addr)
 {
 	struct bt_keys *keys;
 
-	BT_DBG("type %d %s", type, bt_addr_le_str(addr));
+	BT_WARN("type %d %s", type, bt_addr_le_str(addr));
 
 	keys = bt_keys_find(type, id, addr);
 	if (keys) {

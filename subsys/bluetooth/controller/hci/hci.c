@@ -1124,6 +1124,8 @@ static void le_start_encryption(struct net_buf *buf, struct net_buf **evt)
 				 (u8_t *)&cmd->ediv,
 				 &cmd->ltk[0]);
 
+	BT_WARN("Start ENC %d", status);
+
 	*evt = cmd_status(status);
 }
 #endif /* CONFIG_BT_CTLR_LE_ENC */
@@ -1140,7 +1142,7 @@ static void le_ltk_req_reply(struct net_buf *buf, struct net_buf **evt)
 
 	handle = sys_le16_to_cpu(cmd->handle);
 	status = ll_start_enc_req_send(handle, 0x00, &cmd->ltk[0]);
-
+	BT_WARN("LTK reply %d", status);
 	rp = hci_cmd_complete(evt, sizeof(*rp));
 	rp->status = status;
 	rp->handle = sys_cpu_to_le16(handle);
@@ -1156,7 +1158,7 @@ static void le_ltk_req_neg_reply(struct net_buf *buf, struct net_buf **evt)
 	handle = sys_le16_to_cpu(cmd->handle);
 	status = ll_start_enc_req_send(handle, BT_HCI_ERR_PIN_OR_KEY_MISSING,
 				       NULL);
-
+	BT_WARN("LTK reject %d", status);
 	rp = hci_cmd_complete(evt, sizeof(*rp));
 	rp->status = status;
 	rp->handle = sys_le16_to_cpu(handle);
@@ -3131,10 +3133,13 @@ static void le_ltk_request(struct pdu_data *pdu_data, u16_t handle,
 	}
 
 	sep = meta_evt(buf, BT_HCI_EVT_LE_LTK_REQUEST, sizeof(*sep));
-
 	sep->handle = sys_cpu_to_le16(handle);
 	memcpy(&sep->rand, pdu_data->llctrl.enc_req.rand, sizeof(u64_t));
 	memcpy(&sep->ediv, pdu_data->llctrl.enc_req.ediv, sizeof(u16_t));
+	BT_WARN("LTK request %d %s %s",
+		sep->handle,
+		bt_hex(pdu_data->llctrl.enc_req.rand, sizeof(u64_t)),
+		bt_hex(pdu_data->llctrl.enc_req.ediv, sizeof(u16_t)));
 }
 
 static void encrypt_change(u8_t err, u16_t handle,
@@ -3145,7 +3150,7 @@ static void encrypt_change(u8_t err, u16_t handle,
 	if (!(event_mask & BT_EVT_MASK_ENCRYPT_CHANGE)) {
 		return;
 	}
-
+	BT_WARN("Enc change %d", err);
 	hci_evt_create(buf, BT_HCI_EVT_ENCRYPT_CHANGE, sizeof(*ep));
 	ep = net_buf_add(buf, sizeof(*ep));
 
