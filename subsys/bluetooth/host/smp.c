@@ -1505,6 +1505,7 @@ int bt_smp_br_send_pairing_req(struct bt_conn *conn)
 static void smp_reset(struct bt_smp *smp)
 {
 	struct bt_conn *conn = smp->chan.chan.conn;
+	BT_WARN("smp_reset");
 
 	k_delayed_work_cancel(&smp->work);
 
@@ -1584,6 +1585,7 @@ static void smp_timeout(struct k_work *work)
 static void smp_send(struct bt_smp *smp, struct net_buf *buf,
 		     bt_conn_tx_cb_t cb, void *user_data)
 {
+	BT_WARN("buf %d, %d", buf->b.len, buf->b.size);
 	bt_l2cap_send_cb(smp->chan.chan.conn, BT_L2CAP_CID_SMP, buf, cb, NULL);
 	k_delayed_work_submit(&smp->work, SMP_TIMEOUT);
 }
@@ -2278,6 +2280,7 @@ static u8_t smp_master_ident(struct bt_smp *smp, struct net_buf *buf)
 
 static int smp_init(struct bt_smp *smp)
 {
+	BT_WARN("smp_init");
 	/* Initialize SMP context without clearing L2CAP channel context */
 	(void)memset((u8_t *)smp + sizeof(smp->chan), 0,
 		     sizeof(*smp) - (sizeof(smp->chan) + sizeof(smp->work)));
@@ -2529,6 +2532,7 @@ static u8_t sc_send_public_key(struct bt_smp *smp)
 
 	req = net_buf_add(req_buf, sizeof(*req));
 
+	BT_WARN("sc_public_key %p", sc_public_key);
 	memcpy(req->x, sc_public_key, sizeof(req->x));
 	memcpy(req->y, &sc_public_key[32], sizeof(req->y));
 
