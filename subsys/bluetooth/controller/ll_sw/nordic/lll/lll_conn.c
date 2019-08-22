@@ -514,6 +514,7 @@ void lll_conn_pdu_tx_prep(struct lll_conn *lll, struct pdu_data **pdu_data_tx)
 	} else {
 		u16_t max_tx_octets;
 
+		BT_WARN("l 0x%x\n", tx);
 		p = (void *)(tx->pdu + lll->packet_tx_head_offset);
 
 		if (!lll->packet_tx_head_len) {
@@ -750,6 +751,7 @@ static int isr_rx_pdu(struct lll_conn *lll, struct pdu_data *pdu_data_rx,
 				tx->next = link;
 
 				*tx_release = tx;
+				BT_WARN("L 0x%x\n", tx);
 			}
 		} else {
 			lll->empty = 0;

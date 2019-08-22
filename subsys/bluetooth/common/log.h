@@ -42,10 +42,11 @@ LOG_MODULE_REGISTER(LOG_MODULE_NAME);
 
 #define BT_ASSERT(cond) if (!(cond)) { \
 				BT_ERR("assert: '" #cond "' failed"); \
-				irq_lock(); \
-	__asm__ volatile("cpsid i" : : : "memory"); \
-				while(1) {} \
-			}
+				k_oops(); }
+				//irq_lock(); \
+	//__asm__ volatile("cpsid i" : : : "memory"); \
+				//while(1) {} \
+			//}
 
 #define BT_HEXDUMP_DBG(_data, _length, _str) \
 		LOG_HEXDUMP_DBG((const u8_t *)_data, _length, _str)

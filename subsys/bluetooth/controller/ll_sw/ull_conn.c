@@ -1233,11 +1233,17 @@ void ull_conn_tx_lll_enqueue(struct ll_conn *conn, u8_t count)
 
 			/* point to self to indicate a control PDU mem alloc */
 			tx_lll->next = tx_lll;
+
+			BT_WARN("Uc 0x%x 0x%x %u\n", conn, tx_lll,
+			((struct pdu_data *)tx_lll->pdu)->llctrl.opcode);
 		} else {
 			if (conn->tx_head == conn->tx_data) {
 				conn->tx_data = conn->tx_data->next;
 			}
 			conn->tx_head = conn->tx_head->next;
+
+			BT_WARN("Ud 0x%x 0x%x %u\n", conn, tx_lll,
+				((struct pdu_data *)tx_lll->pdu)->len);
 		}
 
 		link = mem_acquire(&mem_link_tx.free);
@@ -1356,15 +1362,26 @@ struct ll_conn *ull_conn_tx_ack(u16_t handle, memq_link_t *link,
 
 		/* release mem if points to itself */
 		if (link->next == (void *)tx) {
+
+			BT_WARN("UC 0x%x 0x%x %u\n", conn, tx,
+				pdu_tx->llctrl.opcode);
 			mem_release(tx, &mem_conn_tx_ctrl.free);
 
 			return conn;
 		} else if (!tx) {
+
+			BT_WARN("UC 0x%x 0x%x %u\n", conn, tx,
+				pdu_tx->llctrl.opcode);
 			return conn;
+		} else {
+			BT_WARN("UDC 0x%x 0x%x %u\n", conn, tx, pdu_tx->llctrl.opcode);
 		}
+
 	} else if (handle != 0xFFFF) {
 		conn = ll_conn_get(handle);
+		BT_WARN("UD 0x%x 0x%x %u\n", conn, tx, pdu_tx->len);
 	} else {
+		BT_WARN("UD 0x%x 0x%x %u\n", conn, tx, pdu_tx->len);
 		pdu_tx->ll_id = PDU_DATA_LLID_RESV;
 	}
 
@@ -4323,6 +4340,10 @@ static inline void ctrl_tx_ack(struct ll_conn *conn, struct node_tx **tx,
 
 		/* Procedure complete */
 		conn->procedure_expire = 0U;
+
+		//if ((conn->llcp_length.req != conn->llcp_length.ack) &&
+		 //   (conn->llcp_length.state == LLCP_LENGTH_STATE_ACK_WAIT)) {
+		//}
 		break;
 #endif /* CONFIG_BT_CTLR_LE_ENC */
 
