@@ -1173,7 +1173,7 @@ struct rpmsg_lite_instance *rpmsg_lite_remote_init(void *shmem_addr, int link_id
     env_init_interrupt(rpmsg_lite_dev->env, rpmsg_lite_dev->tvq->vq_queue_index, rpmsg_lite_dev->tvq);
     env_disable_interrupt(rpmsg_lite_dev->env, rpmsg_lite_dev->rvq->vq_queue_index);
     env_disable_interrupt(rpmsg_lite_dev->env, rpmsg_lite_dev->tvq->vq_queue_index);
-    rpmsg_lite_dev->link_state = 0;
+    rpmsg_lite_dev->link_state = 1;
     env_enable_interrupt(rpmsg_lite_dev->env, rpmsg_lite_dev->rvq->vq_queue_index);
     env_enable_interrupt(rpmsg_lite_dev->env, rpmsg_lite_dev->tvq->vq_queue_index);
 #else
@@ -1181,7 +1181,7 @@ struct rpmsg_lite_instance *rpmsg_lite_remote_init(void *shmem_addr, int link_id
     platform_init_interrupt(rpmsg_lite_dev->tvq->vq_queue_index, rpmsg_lite_dev->tvq);
     env_disable_interrupt(rpmsg_lite_dev->rvq->vq_queue_index);
     env_disable_interrupt(rpmsg_lite_dev->tvq->vq_queue_index);
-    rpmsg_lite_dev->link_state = 0;
+    rpmsg_lite_dev->link_state = 1;
     env_enable_interrupt(rpmsg_lite_dev->rvq->vq_queue_index);
     env_enable_interrupt(rpmsg_lite_dev->tvq->vq_queue_index);
 #endif
