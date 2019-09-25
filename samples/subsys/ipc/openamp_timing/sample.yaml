@@ -1,0 +1,8 @@
+sample:
+    description: This app purpose is to measure performance of OpenAMP
+    name: OpenAMP performance measurement
+tests:
+    sample.subsys.ipc.openamp:
+        build_only: true
+        platform_whitelist: lpcxpresso54114_m4
+        tags: ipm
