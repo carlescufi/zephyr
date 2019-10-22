@@ -298,7 +298,10 @@ static struct bt_conn *g_conn;
 
 static void connected(struct bt_conn *conn, u8_t conn_err)
 {
+	struct bt_hci_cp_read_rssi *cp;
 	char addr[BT_ADDR_LE_STR_LEN];
+	struct net_buf *buf;
+	s8_t rssi = -127;
 	int err;
 
 	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
@@ -308,7 +311,31 @@ static void connected(struct bt_conn *conn, u8_t conn_err)
 		return;
 	}
 
-	printk("Connected: %s\n", addr);
+	buf = bt_hci_cmd_create(BT_HCI_OP_READ_RSSI, sizeof(*cp));
+	if (buf) {
+		struct bt_hci_rp_read_rssi *rp;
+		struct net_buf *rsp;
+
+		cp = net_buf_add(buf, sizeof(*cp));
+		cp->handle = 0; /* TODO: Fill HCI connection handle */
+
+		err = bt_hci_cmd_send_sync(BT_HCI_OP_READ_RSSI, buf, &rsp);
+		if (!err) {
+			rp = (void *)rsp->data;
+			if (!rp->status) {
+				rssi = rp->rssi;
+			} else {
+				printk("Error read RSSI (%d).\n", rp->status);
+			}
+			net_buf_unref(rsp);
+		} else {
+			printk("Failed to read RSSI (%d).\n", err);
+		}
+	} else {
+		printk("Failed to create HCI Read RSSI Command.\n");
+	}
+
+	printk("Connected: %s (%ddB)\n", addr, rssi);
 
 	#if 0
 	err = scan_start();
