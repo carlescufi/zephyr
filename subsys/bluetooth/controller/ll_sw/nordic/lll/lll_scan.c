@@ -821,15 +821,6 @@ static inline u32_t isr_rx_pdu(struct lll_scan *lll, u8_t devmatch_ok,
 		}
 #endif /* CONFIG_BT_CTLR_CONN_RSSI */
 
-		/* block CPU so that there is no CRC error on pdu tx,
-		 * this is only needed if we want the CPU to sleep.
-		 * or when using low latency feature.
-		 */
-		while(IS_ENABLED(CONFIG_BT_CTLR_LOW_LAT) &&
-		      !radio_has_disabled()) {
-			cpu_sleep();
-		}
-
 		/* Stop further LLL radio events */
 		ret = lll_stop(lll);
 		LL_ASSERT(!ret);
