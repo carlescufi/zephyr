@@ -682,9 +682,18 @@ static void hci_num_completed_packets(struct net_buf *buf)
 		irq_unlock(key);
 
 		while (count--) {
+			struct bt_conn_tx *tx;
 			sys_snode_t *node;
 
 			key = irq_lock();
+
+			if (conn->pending_no_cb) {
+				conn->pending_no_cb--;
+				irq_unlock(key);
+				k_sem_give(bt_conn_get_pkts(conn));
+				continue;
+			}
+
 			node = sys_slist_get(&conn->tx_pending);
 			irq_unlock(key);
 
@@ -693,7 +702,14 @@ static void hci_num_completed_packets(struct net_buf *buf)
 				break;
 			}
 
-			k_fifo_put(&conn->tx_notify, node);
+			tx = CONTAINER_OF(node, struct bt_conn_tx, node);
+
+			key = irq_lock();
+			conn->pending_no_cb = tx->pending_no_cb;
+			tx->pending_no_cb = 0U;
+			irq_unlock(key);
+
+			k_work_submit(&tx->work);
 			k_sem_give(bt_conn_get_pkts(conn));
 		}
 
@@ -3833,12 +3849,7 @@ static void process_events(struct k_poll_event *ev, int count)
 			} else if (IS_ENABLED(CONFIG_BT_CONN)) {
 				struct bt_conn *conn;
 
-				if (ev->tag == BT_EVENT_CONN_TX_NOTIFY) {
-					conn = CONTAINER_OF(ev->fifo,
-							    struct bt_conn,
-							    tx_notify);
-					bt_conn_notify_tx(conn);
-				} else if (ev->tag == BT_EVENT_CONN_TX_QUEUE) {
+				if (ev->tag == BT_EVENT_CONN_TX_QUEUE) {
 					conn = CONTAINER_OF(ev->fifo,
 							    struct bt_conn,
 							    tx_queue);
@@ -3856,8 +3867,8 @@ static void process_events(struct k_poll_event *ev, int count)
 }
 
 #if defined(CONFIG_BT_CONN)
-/* command FIFO + conn_change signal + MAX_CONN * 2 (tx & tx_notify) */
-#define EV_COUNT (2 + (CONFIG_BT_MAX_CONN * 2))
+/* command FIFO + conn_change signal + MAX_CONN */
+#define EV_COUNT (2 + CONFIG_BT_MAX_CONN)
 #else
 /* command FIFO */
 #define EV_COUNT 1
@@ -3971,8 +3982,6 @@ static void read_buffer_size_complete(struct net_buf *buf)
 
 	BT_DBG("ACL BR/EDR buffers: pkts %u mtu %u", pkts, bt_dev.le.mtu);
 
-	pkts = MIN(pkts, CONFIG_BT_CONN_TX_MAX);
-
 	k_sem_init(&bt_dev.le.pkts, pkts, pkts);
 }
 #endif
@@ -3981,7 +3990,6 @@ static void read_buffer_size_complete(struct net_buf *buf)
 static void le_read_buffer_size_complete(struct net_buf *buf)
 {
 	struct bt_hci_rp_le_read_buffer_size *rp = (void *)buf->data;
-	u8_t le_max_num;
 
 	BT_DBG("status 0x%02x", rp->status);
 
@@ -3992,8 +4000,7 @@ static void le_read_buffer_size_complete(struct net_buf *buf)
 
 	BT_DBG("ACL LE buffers: pkts %u mtu %u", rp->le_max_num, bt_dev.le.mtu);
 
-	le_max_num = MIN(rp->le_max_num, CONFIG_BT_CONN_TX_MAX);
-	k_sem_init(&bt_dev.le.pkts, le_max_num, le_max_num);
+	k_sem_init(&bt_dev.le.pkts, rp->le_max_num, rp->le_max_num);
 }
 #endif
 
