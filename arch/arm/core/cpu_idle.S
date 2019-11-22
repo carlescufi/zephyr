@@ -73,8 +73,9 @@ SECTION_FUNC(TEXT, arch_cpu_idle)
 #error Unknown ARM architecture
 #endif /* CONFIG_ARMV6_M_ARMV8_M_BASELINE */
 
-	/* wfi */
+	wfi
 
+/*
 	push {r0, r1}
 #if defined(CONFIG_BOARD_NRF51_PCA10028)
 	ldr r0, =0x50000508
@@ -94,7 +95,7 @@ SECTION_FUNC(TEXT, arch_cpu_idle)
 #endif
 	str r1, [r0]
 	pop {r0, r1}
-
+*/
 	bx lr
 
 SECTION_FUNC(TEXT, arch_cpu_atomic_idle)

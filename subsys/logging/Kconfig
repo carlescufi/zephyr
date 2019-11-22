@@ -211,7 +211,7 @@ endif # LOG_PROCESS_THREAD
 
 config LOG_BUFFER_SIZE
 	int "Number of bytes dedicated for the logger internal buffer."
-	default 1024
+	default 4096
 	range 128 65536
 	help
 	  Number of bytes dedicated for the logger internal buffer.
@@ -230,13 +230,13 @@ config LOG_DETECT_MISSED_STRDUP
 config LOG_STRDUP_MAX_STRING
 	int "Longest string that can be duplicated using log_strdup()"
 	default 46 if NETWORKING
-	default 32
+	default 64
 	help
 	  Longer strings are truncated.
 
 config LOG_STRDUP_BUF_COUNT
 	int "Number of buffers in the pool used by log_strdup()"
-	default 4
+	default 16
 	help
 	  Number of calls to log_strdup() which can be pending before flushed
 	  to output. If "<log_strdup alloc failed>" message is seen in the log

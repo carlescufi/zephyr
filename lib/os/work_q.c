@@ -8,6 +8,9 @@
 #include <kernel.h>
 #define WORKQUEUE_THREAD_NAME	"workqueue"
 
+#include <logging/log.h>
+LOG_MODULE_REGISTER(wq);
+
 void z_work_q_main(void *work_q_ptr, void *p2, void *p3)
 {
 	struct k_work_q *work_q = work_q_ptr;
@@ -29,7 +32,10 @@ void z_work_q_main(void *work_q_ptr, void *p2, void *p3)
 		/* Reset pending state so it can be resubmitted by handler */
 		if (atomic_test_and_clear_bit(work->flags,
 					      K_WORK_STATE_PENDING)) {
+			LOG_INF("WQ %p", handler);
 			handler(work);
+			LOG_INF("WQ DONE");
+
 		}
 
 		/* Make sure we don't hog up the CPU if the FIFO never (or

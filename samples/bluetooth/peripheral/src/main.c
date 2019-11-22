@@ -391,6 +391,7 @@ static void connected(struct bt_conn *conn, u8_t err)
 		return;
 	}
 
+	#if 0
 	buf = bt_hci_cmd_create(BT_HCI_OP_READ_RSSI, sizeof(*cp));
 	if (buf) {
 		struct bt_hci_rp_read_rssi *rp;
@@ -414,6 +415,7 @@ static void connected(struct bt_conn *conn, u8_t err)
 	} else {
 		printk("Failed to create HCI Read RSSI Command.\n");
 	}
+	#endif
 
 	printk("Connected: %s (%ddB)\n", addr, rssi);
 
@@ -562,7 +564,7 @@ void main(void)
 	 */
 	while (1) {
 		//k_sleep(MSEC_PER_SEC);
-		k_sleep(K_MSEC(1));
+		k_sleep(K_MSEC(5));
 
 		if (g_conn) {
 			write_cmd(g_conn);

@@ -26,6 +26,7 @@
 #define BT_DBG_ENABLED IS_ENABLED(CONFIG_BT_DEBUG_CONN)
 #define LOG_MODULE_NAME bt_conn
 #include "common/log.h"
+#include <logging/log.h>
 
 #include "hci_core.h"
 #include "conn_internal.h"
@@ -1231,7 +1232,7 @@ void bt_conn_notify_tx(struct bt_conn *conn)
 {
 	struct bt_conn_tx *tx;
 
-	BT_DBG("conn %p", conn);
+	//BT_WARN("conn %p", conn);
 
 	while ((tx = k_fifo_get(&conn->tx_notify, K_NO_WAIT))) {
 		BT_DBG("cb %p user_data %p", tx->data.cb, tx->data.user_data);
@@ -1248,6 +1249,8 @@ void bt_conn_notify_tx(struct bt_conn *conn)
 			tx_free(tx);
 		}
 	}
+
+	//BT_WARN("end conn %p", conn);
 }
 
 static void notify_tx(void)
@@ -1281,7 +1284,10 @@ static struct bt_conn_tx *add_pending_tx(struct bt_conn *conn,
 			tx = k_fifo_get(&free_tx, K_FOREVER);
 		}
 	} else {
+		struct k_thread *thread = k_current_get();
+		BT_WARN("add_pending_tx::k_fifo_get (%p)", thread);
 		tx = k_fifo_get(&free_tx, K_FOREVER);
+		BT_WARN("add_pending_tx::k_fifo_get done");
 	}
 
 	tx->conn = bt_conn_ref(conn);
@@ -1314,14 +1320,19 @@ static bool send_frag(struct bt_conn *conn, struct net_buf *buf, u8_t flags,
 	struct bt_conn_tx *tx;
 	int err;
 
-	BT_DBG("conn %p buf %p len %u flags 0x%02x", conn, buf, buf->len,
-	       flags);
+	//BT_WARN("SF conn %p buf %p len %u flags 0x%02x", conn, buf, buf->len,
+	//       flags);
+	BT_WARN("SF sem take %p", bt_conn_get_pkts(conn));
 
 	/* Wait until the controller can accept ACL packets */
 	k_sem_take(bt_conn_get_pkts(conn), K_FOREVER);
 
+	BT_WARN("SF 1");
+
 	/* Make sure we notify and free up any pending tx contexts */
 	notify_tx();
+
+	BT_WARN("SF 2");
 
 	/* Check for disconnection while waiting for pkts_sem */
 	if (conn->state != BT_CONN_CONNECTED) {
@@ -1335,6 +1346,8 @@ static bool send_frag(struct bt_conn *conn, struct net_buf *buf, u8_t flags,
 	/* Add to pending, it must be done before bt_buf_set_type */
 	tx = add_pending_tx(conn, conn_tx(buf)->cb, conn_tx(buf)->user_data);
 
+	BT_WARN("SF 3");
+
 	bt_buf_set_type(buf, BT_BUF_ACL_OUT);
 
 	err = bt_send(buf);
@@ -1344,6 +1357,7 @@ static bool send_frag(struct bt_conn *conn, struct net_buf *buf, u8_t flags,
 		goto fail;
 	}
 
+	BT_WARN("SF true");
 	return true;
 
 fail:
@@ -1351,6 +1365,7 @@ fail:
 	if (always_consume) {
 		net_buf_unref(buf);
 	}
+	BT_WARN("SF false");
 	return false;
 }
 
@@ -1370,11 +1385,14 @@ static struct net_buf *create_frag(struct bt_conn *conn, struct net_buf *buf)
 	struct net_buf *frag;
 	u16_t frag_len;
 
+	BT_WARN("CF begin");
 #if CONFIG_BT_L2CAP_TX_FRAG_COUNT > 0
 	frag = bt_conn_create_pdu(&frag_pool, 0);
 #else
 	frag = bt_conn_create_pdu(NULL, 0);
 #endif
+
+	BT_WARN("CF end");
 
 	if (conn->state != BT_CONN_CONNECTED) {
 		net_buf_unref(frag);
@@ -2298,6 +2316,10 @@ struct net_buf *bt_conn_create_pdu_timeout(struct net_buf_pool *pool,
 	if (!pool) {
 		pool = &acl_tx_pool;
 	}
+
+	BT_WARN("syswq: %p", &k_sys_work_q.thread);
+	BT_WARN("creat pdu to: %p", k_current_get());
+	BT_WARN("timeout: %d", timeout);
 
 	if (IS_ENABLED(CONFIG_BT_DEBUG_CONN) ||
 	    (k_current_get() == &k_sys_work_q.thread && timeout == K_FOREVER)) {

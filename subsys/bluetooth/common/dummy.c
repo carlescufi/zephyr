@@ -17,7 +17,7 @@
  * before new Rx data is processed. This is a necessity to correctly detect
  * transaction violations in ATT and SMP protocols.
  */
-BUILD_ASSERT(CONFIG_BT_HCI_TX_PRIO < CONFIG_BT_RX_PRIO);
+//BUILD_ASSERT(CONFIG_BT_HCI_TX_PRIO < CONFIG_BT_RX_PRIO);
 #endif
 
 #if defined(CONFIG_BT_CTLR)

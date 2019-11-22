@@ -1665,7 +1665,7 @@ static void l2cap_chan_recv(struct bt_l2cap_chan *chan, struct net_buf *buf)
 	}
 #endif /* CONFIG_BT_L2CAP_DYNAMIC_CHANNEL */
 
-	BT_DBG("chan %p len %u", chan, buf->len);
+	BT_WARN("chan %p len %u recv %p", chan, buf->len, chan->ops->recv);
 
 	chan->ops->recv(chan, buf);
 }

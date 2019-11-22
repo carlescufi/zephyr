@@ -433,8 +433,8 @@ void main(void)
 	printk("Scanning successfully started\n");
 
 	while (1) {
-		//k_sleep(MSEC_PER_SEC);
-		k_sleep(K_MSEC(1));
+		k_sleep(MSEC_PER_SEC);
+		//k_sleep(K_MSEC(3));
 		//k_yield();
 
 		if (g_conn) {

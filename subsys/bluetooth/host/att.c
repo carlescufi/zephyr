@@ -251,23 +251,26 @@ static u8_t att_mtu_req(struct bt_att *att, struct net_buf *buf)
 	struct bt_att_exchange_mtu_rsp *rsp;
 	struct net_buf *pdu;
 	u16_t mtu_client, mtu_server;
+	struct k_thread *thread = k_current_get();
 
 	req = (void *)buf->data;
 
 	mtu_client = sys_le16_to_cpu(req->mtu);
 
-	BT_DBG("Client MTU %u", mtu_client);
+	BT_WARN("Client MTU %u %p", mtu_client, thread);
 
 	/* Check if MTU is valid */
 	if (mtu_client < BT_ATT_DEFAULT_LE_MTU) {
 		return BT_ATT_ERR_INVALID_PDU;
 	}
 
+	BT_WARN("ATT mtu req 1");
 	pdu = bt_att_create_pdu(conn, BT_ATT_OP_MTU_RSP, sizeof(*rsp));
 	if (!pdu) {
 		return BT_ATT_ERR_UNLIKELY;
 	}
 
+	BT_WARN("ATT mtu req 2");
 	mtu_server = BT_ATT_MTU;
 
 	BT_DBG("Server MTU %u", mtu_server);
@@ -285,7 +288,7 @@ static u8_t att_mtu_req(struct bt_att *att, struct net_buf *buf)
 	att->chan.rx.mtu = MIN(mtu_client, mtu_server);
 	att->chan.tx.mtu = att->chan.rx.mtu;
 
-	BT_DBG("Negotiated MTU %u", att->chan.rx.mtu);
+	BT_WARN("Negotiated MTU %u", att->chan.rx.mtu);
 	return 0;
 }
 
@@ -1941,7 +1944,7 @@ static int bt_att_recv(struct bt_l2cap_chan *chan, struct net_buf *buf)
 	}
 
 	hdr = net_buf_pull_mem(buf, sizeof(*hdr));
-	BT_DBG("Received ATT code 0x%02x len %u", hdr->code, buf->len);
+	BT_WARN("Received ATT code 0x%02x len %u", hdr->code, buf->len);
 
 	for (i = 0, handler = NULL; i < ARRAY_SIZE(handlers); i++) {
 		if (hdr->code == handlers[i].op) {
@@ -1976,7 +1979,9 @@ static int bt_att_recv(struct bt_l2cap_chan *chan, struct net_buf *buf)
 		BT_ERR("Invalid len %u for code 0x%02x", buf->len, hdr->code);
 		err = BT_ATT_ERR_INVALID_PDU;
 	} else {
+		BT_WARN("ATT RX %p", handler->func);
 		err = handler->func(att, buf);
+		BT_WARN("ATT RX DONE");
 	}
 
 	if (handler->type == ATT_REQUEST && err) {
@@ -2032,10 +2037,12 @@ struct net_buf *bt_att_create_pdu(struct bt_conn *conn, u8_t op, size_t len)
 	switch (att_op_get_type(op)) {
 	case ATT_RESPONSE:
 	case ATT_CONFIRMATION:
+		BT_WARN("timeout");
 		/* Use a timeout only when responding/confirming */
 		buf = bt_l2cap_create_pdu_timeout(NULL, 0, ATT_TIMEOUT);
 		break;
 	default:
+		BT_WARN("normal");
 		buf = bt_l2cap_create_pdu(NULL, 0);
 	}
 

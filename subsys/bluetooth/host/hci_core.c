@@ -291,7 +291,7 @@ int bt_hci_cmd_send(u16_t opcode, struct net_buf *buf)
 		}
 	}
 
-	BT_DBG("opcode 0x%04x len %u", opcode, buf->len);
+	BT_WARN("send opcode 0x%04x len %u", opcode, buf->len);
 
 	/* Host Number of Completed Packets can ignore the ncmd value
 	 * and does not generate any cmd complete/status events.
@@ -326,7 +326,7 @@ int bt_hci_cmd_send_sync(u16_t opcode, struct net_buf *buf,
 		}
 	}
 
-	BT_DBG("buf %p opcode 0x%04x len %u", buf, opcode, buf->len);
+	BT_WARN("sync buf %p opcode 0x%04x len %u", buf, opcode, buf->len);
 
 	k_sem_init(&sync_sem, 0, 1);
 	cmd(buf)->sync = &sync_sem;
@@ -658,7 +658,7 @@ static void hci_num_completed_packets(struct net_buf *buf)
 	struct bt_hci_evt_num_completed_packets *evt = (void *)buf->data;
 	int i;
 
-	BT_DBG("num_handles %u", evt->num_handles);
+	BT_WARN("num_handles %u", evt->num_handles);
 
 	for (i = 0; i < evt->num_handles; i++) {
 		u16_t handle, count;
@@ -694,11 +694,13 @@ static void hci_num_completed_packets(struct net_buf *buf)
 			}
 
 			k_fifo_put(&conn->tx_notify, node);
+			BT_WARN("NC sem give %p", bt_conn_get_pkts(conn));
 			k_sem_give(bt_conn_get_pkts(conn));
 		}
 
 		bt_conn_unref(conn);
 	}
+	BT_WARN("num_handles exit");
 }
 
 #if defined(CONFIG_BT_CENTRAL)
@@ -3329,7 +3331,7 @@ static void hci_reset_complete(struct net_buf *buf)
 
 static void hci_cmd_done(u16_t opcode, u8_t status, struct net_buf *buf)
 {
-	BT_DBG("opcode 0x%04x status 0x%02x buf %p", opcode, status, buf);
+	BT_WARN("done opcode 0x%04x status 0x%02x buf %p", opcode, status, buf);
 
 	if (net_buf_pool_get(buf->pool_id) != &hci_cmd_pool) {
 		BT_WARN("opcode 0x%04x pool id %u pool %p != &hci_cmd_pool %p",
@@ -3790,7 +3792,7 @@ static void send_cmd(void)
 	BT_ASSERT(buf);
 
 	/* Wait until ncmd > 0 */
-	BT_DBG("calling sem_take_wait");
+	BT_WARN("calling sem_take_wait");
 	k_sem_take(&bt_dev.ncmd_sem, K_FOREVER);
 
 	/* Clear out any existing sent command */
@@ -3802,7 +3804,7 @@ static void send_cmd(void)
 
 	bt_dev.sent_cmd = net_buf_ref(buf);
 
-	BT_DBG("Sending command 0x%04x (buf %p) to driver",
+	BT_WARN("Sending command 0x%04x (buf %p) to driver",
 	       cmd(buf)->opcode, buf);
 
 	err = bt_send(buf);
@@ -3819,7 +3821,7 @@ static void send_cmd(void)
 
 static void process_events(struct k_poll_event *ev, int count)
 {
-	BT_DBG("count %d", count);
+	BT_WARN("PE count %d", count);
 
 	for (; count; ev++, count--) {
 		BT_DBG("ev->state %u", ev->state);
@@ -3837,11 +3839,13 @@ static void process_events(struct k_poll_event *ev, int count)
 					conn = CONTAINER_OF(ev->fifo,
 							    struct bt_conn,
 							    tx_notify);
+					BT_WARN("PE notify");
 					bt_conn_notify_tx(conn);
 				} else if (ev->tag == BT_EVENT_CONN_TX_QUEUE) {
 					conn = CONTAINER_OF(ev->fifo,
 							    struct bt_conn,
 							    tx_queue);
+					BT_WARN("PE process");
 					bt_conn_process_tx(conn);
 				}
 			}
@@ -3853,6 +3857,7 @@ static void process_events(struct k_poll_event *ev, int count)
 			break;
 		}
 	}
+	BT_WARN("PE Exit");
 }
 
 #if defined(CONFIG_BT_CONN)
@@ -5082,6 +5087,8 @@ int bt_enable(bt_ready_cb_t cb)
 			K_PRIO_COOP(CONFIG_BT_HCI_TX_PRIO),
 			0, K_NO_WAIT);
 	k_thread_name_set(&tx_thread_data, "BT TX");
+	BT_WARN("TX thread: %p", &tx_thread_data);
+	k_sleep(K_SECONDS(4));
 
 #if !defined(CONFIG_BT_RECV_IS_RX_THREAD)
 	/* RX thread */
