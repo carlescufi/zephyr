@@ -95,7 +95,7 @@
 
 &uart0 {
 	status = "okay";
-	current-speed = <115200>;
+	current-speed = <1000000>;
 	tx-pin = <20>;
 	rx-pin = <22>;
 	rts-pin = <19>;
