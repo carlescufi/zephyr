@@ -107,7 +107,7 @@ const struct virtio_dispatch dispatch = {
 
 static void ipm_callback(void *context, u32_t id, volatile void *data)
 {
-	BT_DBG("Got callback of id %u", id);
+	//BT_DBG("Got callback of id %u", id);
 	k_sem_give(&rx_sem);
 }
 

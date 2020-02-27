@@ -116,7 +116,7 @@ static void ipm_callback_process(struct k_work *work)
 
 static void ipm_callback(void *context, u32_t id, volatile void *data)
 {
-	LOG_INF("Got callback of id %u", id);
+	//LOG_INF("Got callback of id %u", id);
 	k_work_submit(&ipm_work);
 }
 
@@ -255,6 +255,7 @@ static void hci_rpmsg_rx(u8_t *data, size_t len)
 	}
 
 	if (buf) {
+		LOG_INF("rpmsg_rx type %u len %u", bt_buf_get_type(buf), buf->len);
 		net_buf_put(&tx_queue, buf);
 
 		LOG_HEXDUMP_DBG(buf->data, buf->len, "Final net buffer:");
@@ -287,8 +288,7 @@ static int hci_rpmsg_send(struct net_buf *buf)
 {
 	u8_t pkt_indicator;
 
-	LOG_DBG("buf %p type %u len %u", buf, bt_buf_get_type(buf),
-		buf->len);
+	LOG_INF("rpmsg_tx: type %u len %u", bt_buf_get_type(buf), buf->len);
 
 	LOG_HEXDUMP_DBG(buf->data, buf->len, "Controller buffer:");
 
@@ -324,7 +324,7 @@ void bt_ctlr_assert_handle(char *file, u32_t line)
 int endpoint_cb(struct rpmsg_endpoint *ept, void *data, size_t len, u32_t src,
 		void *priv)
 {
-	LOG_INF("Received message of %u bytes.", len);
+	//LOG_INF("Received message of %u bytes.", len);
 	hci_rpmsg_rx((u8_t *) data, len);
 
 	return RPMSG_SUCCESS;
