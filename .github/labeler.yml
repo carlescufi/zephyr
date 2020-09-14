@@ -25,7 +25,7 @@
 "area: C Library":
   - "lib/libc/**/*"
 "area: Devicetree":
-  - any: ['dts/**/*', '**/*.dts', '**/*.dtsi', 'include/devicetree.h', 'include/devicetree/*', 'doc/guides/dts/**/*', '!dts/bindings/**/*']
+  - any: ['dts/**/*', '**/*.dts', '**/*.dtsi', 'include/devicetree.h', 'include/devicetree/*', 'doc/guides/dts/**/*', '!dts/bindings/*']
 "area: Devicetree Binding":
   - "include/dt-bindings/**/*"
   - "dts/bindings/**/*"
