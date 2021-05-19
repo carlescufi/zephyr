@@ -13,6 +13,8 @@
 # You can pass your manifest repositories to west init when creating a
 # new Zephyr installation. See the west documentation for more
 # information.
+#
+# Added this line
 
 manifest:
   defaults:
