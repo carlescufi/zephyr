@@ -23,8 +23,7 @@ static const struct bt_data ad[] = {
 void main(void)
 {
 	int err;
-
-	printk("Starting Broadcaster\n");
+	int count = 1;
 
 	/* Initialize the Bluetooth Subsystem */
 	err = bt_enable(NULL);
@@ -33,9 +32,11 @@ void main(void)
 		return;
 	}
 
-	printk("Bluetooth initialized\n");
 
 	do {
+		printk("Starting Broadcaster\n");
+		printk("Bluetooth initialized\n");
+
 		k_msleep(1000);
 
 		printk("Sending advertising data: 0x%02X\n", mfg_data[2]);
@@ -49,6 +50,7 @@ void main(void)
 		}
 
 		k_msleep(1000);
+		printk("Stop advertising\n");
 
 		err = bt_le_adv_stop();
 		if (err) {
@@ -58,5 +60,23 @@ void main(void)
 
 		mfg_data[2]++;
 
-	} while (1);
+		k_sleep(K_SECONDS(1));
+		printk("Disable Bluetooth\n");
+
+		err = bt_disable();
+		if (err) {
+			printk("Bluetoot disable failed (err %d)\n", err);
+			return;
+		}
+
+		printk("Enable Bluetooth\n");
+
+		/* Initialize the Bluetooth Subsystem */
+		err = bt_enable(NULL);
+		if (err) {
+			printk("Bluetooth init failed (err %d)\n", err);
+			return;
+		}
+
+	} while (--count);
 }
