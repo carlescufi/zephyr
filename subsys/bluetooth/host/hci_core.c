@@ -3700,9 +3700,11 @@ int bt_disable(void)
 		return -ENODEV;
 	}
 
+#if 0
 	if (!bt_dev.drv->close) {
 		return -ENOTSUP;
 	}
+#endif
 
 	if (atomic_test_and_set_bit(bt_dev.flags, BT_DEV_DISABLE)) {
 		return -EALREADY;
@@ -3711,6 +3713,7 @@ int bt_disable(void)
 	/* Clear BT_DEV_READY before disabling HCI link */
 	atomic_clear_bit(bt_dev.flags, BT_DEV_READY);
 
+#if 0
 	err = bt_dev.drv->close();
 	if (err) {
 		BT_ERR("HCI driver close failed (%d)", err);
@@ -3720,6 +3723,7 @@ int bt_disable(void)
 
 		return err;
 	}
+#endif
 
 	/* Some functions rely on checking this bitfield */
 	memset(bt_dev.supported_commands, 0x00, sizeof(bt_dev.supported_commands));
