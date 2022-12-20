@@ -1,0 +1,10 @@
+# Gitlint config file to run the special sauce tags check
+[general]
+ignore=T1
+ignore-merge-commits=false
+ignore-revert-commits=true
+ignore-fixup-commits=true
+ignore-fixup-amend-commits=true
+ignore-squash-commits=true
+# Extra path is actually relative to the CWD when executing gitlint
+extra-path=scripts/gitlint/ncs
