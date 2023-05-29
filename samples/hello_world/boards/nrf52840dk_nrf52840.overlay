@@ -1,0 +1,19 @@
+/ {
+	gpio_i2c0 {
+		compatible = "gpio-i2c";
+		status = "okay";
+		clock-frequency = <I2C_BITRATE_STANDARD>;
+		sda-gpios = <&gpio0 18 (GPIO_OPEN_DRAIN)>;
+		scl-gpios = <&gpio0 17 (GPIO_OPEN_DRAIN)>;
+		label = "GPIO_I2C_0";
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		si7210:si7210@30 {
+			compatible = "silabs,si7210";
+			reg = <0x30>;
+			label = "Magnetic proximity sensor";
+			status = "okay";
+		};
+	};
+};
