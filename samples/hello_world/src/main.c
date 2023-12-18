@@ -9,5 +9,6 @@
 int main(void)
 {
 	printf("Hello World! %s\n", CONFIG_BOARD);
+	FILE *f = fopen("posix.txt","a");
 	return 0;
 }
